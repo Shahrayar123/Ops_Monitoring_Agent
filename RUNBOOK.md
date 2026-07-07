@@ -95,6 +95,31 @@ This is the heart. The dashboard's `st.fragment(run_every="10s")` calls
 ### 3c. Backend → frontend
 7. `render_live_monitor()` parses the JSON back into a `HealthReport` and renders (via `dashboard/styles.py`): the live indicator, the health banner, the KPI cards, and the 9 check cards. **No AI is involved in this loop** — it's pure deterministic Python, fast and cheap.
 
+### 3d. Refresh interval vs. caching — how "fresh" the data really is
+
+The sidebar **Refresh interval** (5 / 10 / 30 / 60s) sets `run_every` on the
+Streamlit fragment. So *every interval*, the dashboard calls the backend and the
+**9 checks re-run**. What that pulls underneath depends on the source:
+
+**Export / JSON tenants (files):** fully fresh every interval. The checks re-read
+the source; a file is re-parsed only if its mtime changed (unchanged files skip
+re-parsing but the data returned is still current). Edit a JSON file → the
+dashboard reflects it within one interval.
+
+**Live API tenants:** two different freshness rules on purpose —
+
+| What | Refreshes every interval? | Why |
+|---|---|---|
+| Dashboard → backend call + check run | ✅ yes | the refresh timer |
+| Host health + heartbeat (`get_hosts`) | ✅ yes — hits Cloudera every interval | real-time signals, never cached |
+| Metrics: CPU / RAM / disk / HDFS / network | ❌ served from cache for `metrics_cache_ttl_sec` (default 300s) | metrics are pulled at HOURLY rollup — they only change once an hour, so re-querying every few seconds would load CM for no benefit |
+
+So on a live cluster with a 5s interval: the page and host health update every
+5s, but the metric *values* re-pull from Cloudera every 5 minutes (by design).
+To change that for a specific customer, set `metrics_cache_ttl_sec` in their
+`cloudera:` block (e.g. `60` = re-pull metrics each minute; `0` = no cache,
+every interval hits the cluster — not recommended for the large disk query).
+
 ---
 
 ## 4. On-demand AI analysis (only when there are breaches)
