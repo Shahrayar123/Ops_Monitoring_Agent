@@ -1,0 +1,65 @@
+{
+  "_note": "SAMPLE DATA for development/demo - not from a real cluster. Shaped exactly like the real Cloudera Manager API response, so when real data arrives only the reading code in data_sources/ may need small tweaks.",
+  "items": [
+    {
+      "id": "evt-1",
+      "content": "The health test result for HOST_SCM_HEALTH has become bad.",
+      "timeOccurred": "2026-07-01T17:20:05.000Z",
+      "timeReceived": "2026-07-01T17:20:06.000Z",
+      "category": "HEALTH_CHECK",
+      "severity": "CRITICAL",
+      "alert": true,
+      "attributes": {
+        "category": [
+          "HEALTH_CHECK"
+        ],
+        "host": [
+          "node3.example-customer.internal"
+        ],
+        "healthCheck": [
+          "HOST_SCM_HEALTH"
+        ]
+      }
+    },
+    {
+      "id": "evt-2",
+      "content": "The health test result for YARN_RESOURCEMANAGER_HEALTH has become concerning.",
+      "timeOccurred": "2026-07-01T17:25:00.000Z",
+      "timeReceived": "2026-07-01T17:25:01.000Z",
+      "category": "HEALTH_CHECK",
+      "severity": "IMPORTANT",
+      "alert": true,
+      "attributes": {
+        "category": [
+          "HEALTH_CHECK"
+        ],
+        "service": [
+          "yarn"
+        ],
+        "healthCheck": [
+          "YARN_RESOURCEMANAGER_HEALTH"
+        ]
+      }
+    },
+    {
+      "id": "evt-3",
+      "content": "Health check HDFS_FREE_SPACE_REMAINING became GOOD.",
+      "timeOccurred": "2026-07-01T17:00:00.000Z",
+      "timeReceived": "2026-07-01T17:00:01.000Z",
+      "category": "HEALTH_CHECK",
+      "severity": "INFORMATIONAL",
+      "alert": false,
+      "attributes": {
+        "category": [
+          "HEALTH_CHECK"
+        ],
+        "service": [
+          "hdfs"
+        ],
+        "healthCheck": [
+          "HDFS_FREE_SPACE_REMAINING"
+        ]
+      }
+    }
+  ]
+}

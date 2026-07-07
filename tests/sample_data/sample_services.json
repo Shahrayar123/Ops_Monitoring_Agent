@@ -1,0 +1,58 @@
+{
+  "_note": "SAMPLE DATA for development/demo - not from a real cluster. Shaped exactly like the real Cloudera Manager API response, so when real data arrives only the reading code in data_sources/ may need small tweaks.",
+  "items": [
+    {
+      "name": "hdfs",
+      "type": "HDFS",
+      "clusterRef": {
+        "clusterName": "Example-Cluster"
+      },
+      "serviceState": "STARTED",
+      "healthSummary": "GOOD",
+      "healthChecks": [
+        {
+          "name": "HDFS_FREE_SPACE_REMAINING",
+          "summary": "GOOD"
+        },
+        {
+          "name": "HDFS_HA_NAMENODE_HEALTH",
+          "summary": "GOOD"
+        }
+      ]
+    },
+    {
+      "name": "yarn",
+      "type": "YARN",
+      "clusterRef": {
+        "clusterName": "Example-Cluster"
+      },
+      "serviceState": "STARTED",
+      "healthSummary": "CONCERNING",
+      "healthChecks": [
+        {
+          "name": "YARN_RESOURCEMANAGER_HEALTH",
+          "summary": "CONCERNING"
+        },
+        {
+          "name": "YARN_NODEMANAGERS_HEALTHY",
+          "summary": "GOOD"
+        }
+      ]
+    },
+    {
+      "name": "hbase",
+      "type": "HBASE",
+      "clusterRef": {
+        "clusterName": "Example-Cluster"
+      },
+      "serviceState": "STARTED",
+      "healthSummary": "GOOD",
+      "healthChecks": [
+        {
+          "name": "HBASE_MASTER_HEALTH",
+          "summary": "GOOD"
+        }
+      ]
+    }
+  ]
+}

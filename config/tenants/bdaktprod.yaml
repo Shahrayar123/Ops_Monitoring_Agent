@@ -1,0 +1,47 @@
+# Real customer cluster — reads actual Cloudera Manager API exports from
+# data/bdaktprod/ (hosts/ + metrics/ subfolders). Switch data_source.type to
+# "api" and fill in cloudera/credentials once live access is provided.
+
+tenant_id: bdaktprod
+display_name: "BDA KT Production"
+cluster_name: bdaktprod-cluster
+
+data_source:
+  type: export
+  data_dir: data/bdaktprod
+
+thresholds:
+  cpu_pct: 60.0
+  ram_pct: 60.0
+  disk_pct: 90.0
+  disk_mounts:                # data disks + key OS mounts; virtual mounts skipped
+    - /u01
+    - /u02
+    - /u03
+    - /u04
+    - /u05
+    - /u06
+    - /u07
+    - /u08
+    - /u09
+    - /u10
+    - /u11
+    - /u12
+    - /u13
+    - /u14
+    - /u15
+    - /u16
+    - /var
+    - /opt
+    - /home
+    - /tmp
+  heartbeat_window_sec: 1800        # 30 min — wide enough to absorb the few-minute
+                                    # spread between when each host file was exported;
+                                    # tighten toward 60s once reading a live cluster
+  log_size_mb: 1024.0
+  hdfs_growth_pct_window_hours: 24
+  hdfs_growth_pct_threshold: 10.0
+  network_error_rate_threshold: 0.0
+
+redis:
+  enabled: false

@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+logs/
+secrets/*.env
+
+# Local tooling state (Claude Code) — keep local, never commit.
+.claude/
+
+# Real customer cluster data — large and confidential, never commit.
+# The small synthetic demo data (data/sample/) IS committed.
+data/bdaktprod/
+data/Sample APIs data/

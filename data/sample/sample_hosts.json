@@ -1,0 +1,77 @@
+{
+  "_note": "SAMPLE DATA for development/demo - not from a real cluster. Shaped exactly like the real Cloudera Manager API response, so when real data arrives only the reading code in data_sources/ may need small tweaks.",
+  "items": [
+    {
+      "hostId": "host-1-uuid",
+      "hostname": "node1.example-customer.internal",
+      "ipAddress": "10.0.0.11",
+      "rackId": "/default",
+      "lastHeartbeat": "2026-07-01T17:40:00.000Z",
+      "healthSummary": "GOOD",
+      "healthChecks": [
+        {
+          "name": "HOST_SCM_HEALTH",
+          "summary": "GOOD"
+        },
+        {
+          "name": "HOST_CLOCK_OFFSET",
+          "summary": "GOOD"
+        }
+      ],
+      "numCores": 16,
+      "numPhysicalCores": 8,
+      "totalPhysMemBytes": 68719476736,
+      "clusterRef": {
+        "clusterName": "Example-Cluster"
+      }
+    },
+    {
+      "hostId": "host-2-uuid",
+      "hostname": "node2.example-customer.internal",
+      "ipAddress": "10.0.0.12",
+      "rackId": "/default",
+      "lastHeartbeat": "2026-07-01T17:39:50.000Z",
+      "healthSummary": "GOOD",
+      "healthChecks": [
+        {
+          "name": "HOST_SCM_HEALTH",
+          "summary": "GOOD"
+        },
+        {
+          "name": "HOST_CLOCK_OFFSET",
+          "summary": "GOOD"
+        }
+      ],
+      "numCores": 16,
+      "numPhysicalCores": 8,
+      "totalPhysMemBytes": 68719476736,
+      "clusterRef": {
+        "clusterName": "Example-Cluster"
+      }
+    },
+    {
+      "hostId": "host-3-uuid",
+      "hostname": "node3.example-customer.internal",
+      "ipAddress": "10.0.0.13",
+      "rackId": "/default",
+      "lastHeartbeat": "2026-07-01T17:20:00.000Z",
+      "healthSummary": "CONCERNING",
+      "healthChecks": [
+        {
+          "name": "HOST_SCM_HEALTH",
+          "summary": "CONCERNING"
+        },
+        {
+          "name": "HOST_CLOCK_OFFSET",
+          "summary": "GOOD"
+        }
+      ],
+      "numCores": 16,
+      "numPhysicalCores": 8,
+      "totalPhysMemBytes": 68719476736,
+      "clusterRef": {
+        "clusterName": "Example-Cluster"
+      }
+    }
+  ]
+}

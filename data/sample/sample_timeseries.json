@@ -1,0 +1,411 @@
+{
+  "_note": "SAMPLE DATA for development/demo - not from a real cluster. Shaped exactly like the real Cloudera Manager API response, so when real data arrives only the reading code in data_sources/ may need small tweaks.",
+  "items": [
+    {
+      "timeSeries": [
+        {
+          "metadata": {
+            "metricName": "cpu_percent",
+            "entityName": "node1.example-customer.internal",
+            "attributes": {
+              "category": "HOST",
+              "hostname": "node1.example-customer.internal"
+            },
+            "unitNumerator": "percent"
+          },
+          "data": [
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 42.5,
+              "type": "SAMPLE"
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "metricName": "cpu_percent",
+            "entityName": "node2.example-customer.internal",
+            "attributes": {
+              "category": "HOST",
+              "hostname": "node2.example-customer.internal"
+            },
+            "unitNumerator": "percent"
+          },
+          "data": [
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 71.2,
+              "type": "SAMPLE"
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "metricName": "cpu_percent",
+            "entityName": "node3.example-customer.internal",
+            "attributes": {
+              "category": "HOST",
+              "hostname": "node3.example-customer.internal"
+            },
+            "unitNumerator": "percent"
+          },
+          "data": [
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 38.9,
+              "type": "SAMPLE"
+            }
+          ]
+        }
+      ],
+      "warnings": [],
+      "unresolvedNames": []
+    },
+    {
+      "timeSeries": [
+        {
+          "metadata": {
+            "metricName": "physical_memory_used",
+            "entityName": "node1.example-customer.internal",
+            "attributes": {
+              "category": "HOST",
+              "hostname": "node1.example-customer.internal"
+            },
+            "unitNumerator": "bytes"
+          },
+          "data": [
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 30064771072,
+              "type": "SAMPLE"
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "metricName": "physical_memory_total",
+            "entityName": "node1.example-customer.internal",
+            "attributes": {
+              "category": "HOST",
+              "hostname": "node1.example-customer.internal"
+            },
+            "unitNumerator": "bytes"
+          },
+          "data": [
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 68719476736,
+              "type": "SAMPLE"
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "metricName": "physical_memory_used",
+            "entityName": "node2.example-customer.internal",
+            "attributes": {
+              "category": "HOST",
+              "hostname": "node2.example-customer.internal"
+            },
+            "unitNumerator": "bytes"
+          },
+          "data": [
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 48318382080,
+              "type": "SAMPLE"
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "metricName": "physical_memory_total",
+            "entityName": "node2.example-customer.internal",
+            "attributes": {
+              "category": "HOST",
+              "hostname": "node2.example-customer.internal"
+            },
+            "unitNumerator": "bytes"
+          },
+          "data": [
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 68719476736,
+              "type": "SAMPLE"
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "metricName": "physical_memory_used",
+            "entityName": "node3.example-customer.internal",
+            "attributes": {
+              "category": "HOST",
+              "hostname": "node3.example-customer.internal"
+            },
+            "unitNumerator": "bytes"
+          },
+          "data": [
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 20401094656,
+              "type": "SAMPLE"
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "metricName": "physical_memory_total",
+            "entityName": "node3.example-customer.internal",
+            "attributes": {
+              "category": "HOST",
+              "hostname": "node3.example-customer.internal"
+            },
+            "unitNumerator": "bytes"
+          },
+          "data": [
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 68719476736,
+              "type": "SAMPLE"
+            }
+          ]
+        }
+      ],
+      "warnings": [],
+      "unresolvedNames": []
+    },
+    {
+      "timeSeries": [
+        {
+          "metadata": {
+            "metricName": "fs_bytes_used_percent",
+            "entityName": "node1.example-customer.internal",
+            "attributes": {
+              "category": "FILESYSTEM",
+              "hostname": "node1.example-customer.internal",
+              "mount_point": "/var"
+            },
+            "unitNumerator": "percent"
+          },
+          "data": [
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 55.0,
+              "type": "SAMPLE"
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "metricName": "fs_bytes_used_percent",
+            "entityName": "node1.example-customer.internal",
+            "attributes": {
+              "category": "FILESYSTEM",
+              "hostname": "node1.example-customer.internal",
+              "mount_point": "/opt"
+            },
+            "unitNumerator": "percent"
+          },
+          "data": [
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 39.8,
+              "type": "SAMPLE"
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "metricName": "fs_bytes_used_percent",
+            "entityName": "node2.example-customer.internal",
+            "attributes": {
+              "category": "FILESYSTEM",
+              "hostname": "node2.example-customer.internal",
+              "mount_point": "/var"
+            },
+            "unitNumerator": "percent"
+          },
+          "data": [
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 93.4,
+              "type": "SAMPLE"
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "metricName": "fs_bytes_used_percent",
+            "entityName": "node2.example-customer.internal",
+            "attributes": {
+              "category": "FILESYSTEM",
+              "hostname": "node2.example-customer.internal",
+              "mount_point": "/opt"
+            },
+            "unitNumerator": "percent"
+          },
+          "data": [
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 60.9,
+              "type": "SAMPLE"
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "metricName": "fs_bytes_used_percent",
+            "entityName": "node3.example-customer.internal",
+            "attributes": {
+              "category": "FILESYSTEM",
+              "hostname": "node3.example-customer.internal",
+              "mount_point": "/var"
+            },
+            "unitNumerator": "percent"
+          },
+          "data": [
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 49.2,
+              "type": "SAMPLE"
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "metricName": "fs_bytes_used_percent",
+            "entityName": "node3.example-customer.internal",
+            "attributes": {
+              "category": "FILESYSTEM",
+              "hostname": "node3.example-customer.internal",
+              "mount_point": "/opt"
+            },
+            "unitNumerator": "percent"
+          },
+          "data": [
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 34.6,
+              "type": "SAMPLE"
+            }
+          ]
+        }
+      ],
+      "warnings": [],
+      "unresolvedNames": []
+    },
+    {
+      "timeSeries": [
+        {
+          "metadata": {
+            "metricName": "dfs_capacity",
+            "entityName": "hdfs",
+            "attributes": {
+              "category": "SERVICE",
+              "serviceName": "hdfs"
+            },
+            "unitNumerator": "bytes"
+          },
+          "data": [
+            {
+              "timestamp": "2026-06-30T17:40:00.000Z",
+              "value": 10995116277760,
+              "type": "SAMPLE"
+            },
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 10995116277760,
+              "type": "SAMPLE"
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "metricName": "dfs_capacity_used",
+            "entityName": "hdfs",
+            "attributes": {
+              "category": "SERVICE",
+              "serviceName": "hdfs"
+            },
+            "unitNumerator": "bytes"
+          },
+          "data": [
+            {
+              "timestamp": "2026-06-30T17:40:00.000Z",
+              "value": 6597069766656,
+              "type": "SAMPLE"
+            },
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 7817846472499,
+              "type": "SAMPLE"
+            }
+          ]
+        }
+      ],
+      "warnings": [],
+      "unresolvedNames": []
+    },
+    {
+      "timeSeries": [
+        {
+          "metadata": {
+            "metricName": "host_network_frame_errors_rate",
+            "entityName": "node1.example-customer.internal",
+            "attributes": {
+              "category": "HOST",
+              "hostname": "node1.example-customer.internal"
+            },
+            "unitNumerator": "errors_per_sec"
+          },
+          "data": [
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 0.0,
+              "type": "SAMPLE"
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "metricName": "host_network_frame_errors_rate",
+            "entityName": "node2.example-customer.internal",
+            "attributes": {
+              "category": "HOST",
+              "hostname": "node2.example-customer.internal"
+            },
+            "unitNumerator": "errors_per_sec"
+          },
+          "data": [
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 0.5,
+              "type": "SAMPLE"
+            }
+          ]
+        },
+        {
+          "metadata": {
+            "metricName": "host_network_frame_errors_rate",
+            "entityName": "node3.example-customer.internal",
+            "attributes": {
+              "category": "HOST",
+              "hostname": "node3.example-customer.internal"
+            },
+            "unitNumerator": "errors_per_sec"
+          },
+          "data": [
+            {
+              "timestamp": "2026-07-01T17:40:00.000Z",
+              "value": 4.2,
+              "type": "SAMPLE"
+            }
+          ]
+        }
+      ],
+      "warnings": [],
+      "unresolvedNames": []
+    }
+  ]
+}

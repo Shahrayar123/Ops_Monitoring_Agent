@@ -1,0 +1,69 @@
+{
+  "_note": "SAMPLE DATA for development/demo - not from a real cluster. Shaped exactly like the real Cloudera Manager API response, so when real data arrives only the reading code in data_sources/ may need small tweaks.",
+  "disk_usage": [
+    {
+      "hostname": "node1.example-customer.internal",
+      "mount_point": "/var",
+      "used_percent": 56.1
+    },
+    {
+      "hostname": "node1.example-customer.internal",
+      "mount_point": "/opt",
+      "used_percent": 40.3
+    },
+    {
+      "hostname": "node2.example-customer.internal",
+      "mount_point": "/var",
+      "used_percent": 93.7
+    },
+    {
+      "hostname": "node2.example-customer.internal",
+      "mount_point": "/opt",
+      "used_percent": 61.2
+    },
+    {
+      "hostname": "node3.example-customer.internal",
+      "mount_point": "/var",
+      "used_percent": 48.9
+    },
+    {
+      "hostname": "node3.example-customer.internal",
+      "mount_point": "/opt",
+      "used_percent": 35.0
+    }
+  ],
+  "ping_results": [
+    {
+      "hostname": "node1.example-customer.internal",
+      "reachable": true,
+      "latency_ms": 0.8
+    },
+    {
+      "hostname": "node2.example-customer.internal",
+      "reachable": true,
+      "latency_ms": 1.4
+    },
+    {
+      "hostname": "node3.example-customer.internal",
+      "reachable": false,
+      "latency_ms": null
+    }
+  ],
+  "log_files": [
+    {
+      "hostname": "node1.example-customer.internal",
+      "path": "/var/log/hadoop-hdfs/hadoop-hdfs-namenode.log",
+      "size_bytes": 314572800
+    },
+    {
+      "hostname": "node2.example-customer.internal",
+      "path": "/var/log/hadoop-hdfs/hadoop-hdfs-datanode.log",
+      "size_bytes": 1288490188
+    },
+    {
+      "hostname": "node1.example-customer.internal",
+      "path": "/var/log/hadoop-yarn/yarn-resourcemanager.log",
+      "size_bytes": 209715200
+    }
+  ]
+}

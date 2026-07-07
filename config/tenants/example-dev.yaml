@@ -1,0 +1,32 @@
+# Synthetic demo tenant — hand-made sample data with a seeded problem for every
+# check. Kept for demos and tests. Real customer data lives under its own tenant
+# (see bdaktprod.yaml, which uses data_source.type: export).
+
+tenant_id: example-dev
+display_name: "Example Tenant (Dev / Offline)"
+cluster_name: Example-Cluster
+
+data_source:
+  type: json
+  data_dir: data/sample   # folder containing this tenant's sample_*.json files
+
+# No cloudera/credentials/ssh needed for type: json.
+
+# Limits the checks compare against. Delete any line to use its default.
+thresholds:
+  cpu_pct: 60.0                      # flag hosts above this CPU %
+  ram_pct: 60.0                      # flag hosts above this memory %
+  disk_pct: 90.0                     # flag mounts fuller than this %
+  disk_mounts:                       # which mounts to watch
+    - /var
+    - /opt
+    - /home
+    - /tmp
+  heartbeat_window_sec: 60           # flag hosts silent longer than this
+  log_size_mb: 1024.0                # flag single log files bigger than this
+  hdfs_growth_pct_window_hours: 24   # window for the storage-growth check
+  hdfs_growth_pct_threshold: 10.0    # flag growth faster than this % per window
+  network_error_rate_threshold: 0.0  # flag any network frame errors
+
+redis:
+  enabled: false

@@ -1,0 +1,54 @@
+# TEMPLATE for a real customer — copy this file per customer and fill in the
+# cluster address, cluster name, and environment-variable names.
+#
+# Never write real hostnames or passwords in this file. The credentials.* and
+# ssh.* fields name ENVIRONMENT VARIABLES; the actual secret values go in .env
+# (which is gitignored) or the process environment on the deployment machine.
+
+tenant_id: example-api-tenant
+display_name: "Example Tenant (Live Cloudera API)"
+cluster_name: Example-Cluster
+
+data_source:
+  type: api
+
+cloudera:
+  cm_host: cm.example-customer.internal
+  port: 7183
+  use_tls: true
+  api_version: auto      # "auto" = ask the cluster at startup; never hard-code
+  tls_cert_path: /etc/ops-agent/certs/example-customer-ca.pem
+  lookback_days: 3            # days of history to fetch (powers the date picker)
+  metrics_cache_ttl_sec: 300  # how long fetched metrics are cached before re-querying
+
+credentials:
+  username_env: EXAMPLE_TENANT_CM_USERNAME
+  password_env: EXAMPLE_TENANT_CM_PASSWORD
+
+ssh:
+  host: cm.example-customer.internal
+  port: 22
+  username_env: EXAMPLE_TENANT_SSH_USERNAME
+  key_path_env: EXAMPLE_TENANT_SSH_KEY_PATH
+  log_dirs:
+    - /var/log/hadoop
+    - /var/log/hadoop-hdfs
+    - /var/log/hadoop-yarn
+
+thresholds:
+  cpu_pct: 60.0
+  ram_pct: 60.0
+  disk_pct: 90.0
+  disk_mounts:
+    - /var
+    - /opt
+    - /home
+    - /tmp
+  heartbeat_window_sec: 60
+  log_size_mb: 1024.0
+  hdfs_growth_pct_window_hours: 24
+  hdfs_growth_pct_threshold: 10.0
+  network_error_rate_threshold: 0.0
+
+redis:
+  enabled: false

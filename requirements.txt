@@ -1,0 +1,11 @@
+openai-agents
+openai
+httpx
+paramiko 
+pydantic
+pyyaml
+pytest
+streamlit
+python-dotenv
+fastapi
+uvicorn

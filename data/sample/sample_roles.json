@@ -1,0 +1,99 @@
+{
+  "_note": "SAMPLE DATA for development/demo - not from a real cluster. Shaped exactly like the real Cloudera Manager API response, so when real data arrives only the reading code in data_sources/ may need small tweaks.",
+  "items": [
+    {
+      "name": "hdfs-NAMENODE-1",
+      "type": "NAMENODE",
+      "serviceRef": {
+        "clusterName": "Example-Cluster",
+        "serviceName": "hdfs"
+      },
+      "hostRef": {
+        "hostId": "host-1-uuid"
+      },
+      "healthSummary": "GOOD",
+      "healthChecks": [
+        {
+          "name": "NAMENODE_ROLE_HEALTH",
+          "summary": "GOOD"
+        }
+      ]
+    },
+    {
+      "name": "hdfs-DATANODE-1",
+      "type": "DATANODE",
+      "serviceRef": {
+        "clusterName": "Example-Cluster",
+        "serviceName": "hdfs"
+      },
+      "hostRef": {
+        "hostId": "host-2-uuid"
+      },
+      "healthSummary": "GOOD",
+      "healthChecks": [
+        {
+          "name": "DATANODE_ROLE_HEALTH",
+          "summary": "GOOD"
+        }
+      ]
+    },
+    {
+      "name": "yarn-RESOURCEMANAGER-1",
+      "type": "RESOURCEMANAGER",
+      "serviceRef": {
+        "clusterName": "Example-Cluster",
+        "serviceName": "yarn"
+      },
+      "hostRef": {
+        "hostId": "host-1-uuid"
+      },
+      "healthSummary": "CONCERNING",
+      "healthChecks": [
+        {
+          "name": "RESOURCEMANAGER_ROLE_HEALTH",
+          "summary": "CONCERNING"
+        },
+        {
+          "name": "RESOURCEMANAGER_WEB_METRIC_COLLECTION",
+          "summary": "CONCERNING"
+        }
+      ]
+    },
+    {
+      "name": "yarn-NODEMANAGER-1",
+      "type": "NODEMANAGER",
+      "serviceRef": {
+        "clusterName": "Example-Cluster",
+        "serviceName": "yarn"
+      },
+      "hostRef": {
+        "hostId": "host-2-uuid"
+      },
+      "healthSummary": "GOOD",
+      "healthChecks": [
+        {
+          "name": "NODEMANAGER_ROLE_HEALTH",
+          "summary": "GOOD"
+        }
+      ]
+    },
+    {
+      "name": "hbase-MASTER-1",
+      "type": "MASTER",
+      "serviceRef": {
+        "clusterName": "Example-Cluster",
+        "serviceName": "hbase"
+      },
+      "hostRef": {
+        "hostId": "host-3-uuid"
+      },
+      "healthSummary": "GOOD",
+      "healthChecks": [
+        {
+          "name": "MASTER_ROLE_HEALTH",
+          "summary": "GOOD"
+        }
+      ]
+    }
+  ]
+}
