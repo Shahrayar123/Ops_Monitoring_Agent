@@ -1,0 +1,9 @@
+{
+  // Use the project's virtual environment for running and debugging.
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "python.terminal.activateEnvironment": true,
+  // Let pytest be discovered/run from the Testing panel too.
+  "python.testing.pytestEnabled": true,
+  "python.testing.pytestArgs": ["tests"],
+  "python.testing.unittestEnabled": false
+}

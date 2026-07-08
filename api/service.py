@@ -20,7 +20,12 @@ from pathlib import Path
 from typing import Optional
 
 from checks import HealthReport, run_all_checks
-from config import TenantConfig, load_tenant_configs_from_dir
+from config import (
+    TenantConfig,
+    ThresholdUpdateError,
+    load_tenant_configs_from_dir,
+    update_tenant_thresholds,
+)
 from data_sources import DataSource, choose_data_source
 from data_sources.select import source_kind_for
 
@@ -83,6 +88,19 @@ def clear_source_cache() -> None:
 
 def available_dates(tenant_id: str) -> list[date]:
     return get_source(tenant_id).available_dates()
+
+
+def get_thresholds(tenant_id: str) -> dict:
+    return get_tenant(tenant_id).thresholds.model_dump()
+
+
+def set_thresholds(tenant_id: str, new_values: dict) -> dict:
+    """Validate and persist edited thresholds to the tenant's YAML. The next
+    report picks them up automatically (build_report re-loads the tenant each
+    time), so no cache to clear."""
+    get_tenant(tenant_id)  # 404 if unknown before we try to write
+    validated = update_tenant_thresholds(tenant_id, new_values)
+    return validated.model_dump()
 
 
 def _apply_day(source: DataSource, as_of: Optional[date]) -> Optional[datetime]:

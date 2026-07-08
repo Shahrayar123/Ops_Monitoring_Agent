@@ -9,3 +9,4 @@ streamlit
 python-dotenv
 fastapi
 uvicorn
+ruamel.yaml

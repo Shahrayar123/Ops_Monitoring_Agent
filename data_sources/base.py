@@ -134,8 +134,8 @@ class DataSource(ABC):
         An empty list means: return everything available."""
 
     @abstractmethod
-    def get_events(self, category: str = "HEALTH_CHECK", alert_only: bool = True) -> list[Event]:
-        """Alert/warning events, newest info from the cluster."""
+    def get_events(self, category: str | None = None, alert_only: bool = True) -> list[Event]:
+        """Alert/warning events. category=None keeps every event category."""
 
     @abstractmethod
     def get_disk_usage(self) -> list[DiskUsage]:

@@ -67,15 +67,15 @@ class ThresholdsConfig(BaseModel):
     """The limits the checks compare against. Every tenant can tune these;
     the defaults below apply when a tenant's YAML doesn't set them."""
 
-    cpu_pct: float = 60.0
-    ram_pct: float = 60.0
-    disk_pct: float = 90.0
+    cpu_pct: float = Field(default=60.0, ge=0, le=100)
+    ram_pct: float = Field(default=60.0, ge=0, le=100)
+    disk_pct: float = Field(default=90.0, ge=0, le=100)
     disk_mounts: list[str] = Field(default_factory=lambda: ["/var", "/opt", "/home", "/tmp"])
-    heartbeat_window_sec: int = 60
-    log_size_mb: float = 1024.0
-    hdfs_growth_pct_window_hours: int = 24
-    hdfs_growth_pct_threshold: float = 10.0
-    network_error_rate_threshold: float = 0.0
+    heartbeat_window_sec: int = Field(default=60, ge=1)
+    log_size_mb: float = Field(default=1024.0, ge=0)
+    hdfs_growth_pct_window_hours: int = Field(default=24, ge=1)
+    hdfs_growth_pct_threshold: float = Field(default=10.0, ge=0)
+    network_error_rate_threshold: float = Field(default=0.0, ge=0)
 
 
 class RedisConfig(BaseModel):

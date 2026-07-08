@@ -67,8 +67,14 @@ The **Streamlit dashboard is a thin client** that calls that API over HTTP — i
 | `GET /tenants` | list customers + their data source kind |
 | `GET /tenants/{id}/dates` | days available for the date filter |
 | `GET /tenants/{id}/report?as_of=YYYY-MM-DD` | run all checks, return the report |
+| `GET /tenants/{id}/thresholds` | the tenant's current breach limits |
+| `PUT /tenants/{id}/thresholds` | edit + persist the limits (validated, written to the YAML) |
 | `POST /tenants/{id}/analyze?as_of=...` | start a background AI analysis → `job_id` |
 | `GET /analysis/{job_id}` | poll the AI job until it's done |
+
+Thresholds are editable from the dashboard sidebar; the change is validated by
+the API and saved back to the tenant's YAML (comments preserved), so the next
+monitoring run uses the new limits.
 
 AI analysis is slow (minutes on CPU), so `analyze` returns immediately and the work runs in the background — the client polls `GET /analysis/{job_id}`.
 
@@ -95,6 +101,8 @@ the interactive API docs. The dashboard re-fetches the report automatically
   the env vars holding credentials. Secret values never appear in YAML. For live
   tenants, `lookback_days` and `metrics_cache_ttl_sec` (in the `cloudera:` block)
   tune how much history to fetch and how long to cache it — per customer.
+  Thresholds can also be edited from the dashboard sidebar — the API validates
+  and writes the change straight back to this file (comments preserved).
 - **`secrets/<tenant_id>.env`** (gitignored) — that customer's credential values,
   loaded automatically when their live source is built. One file per customer, so
   rotating or revoking one never touches another.
@@ -107,8 +115,11 @@ Adding a customer = one YAML in `config/tenants/` (+ one file in `secrets/` for 
 ## Customer onboarding flow
 
 1. **Demo stage** — the customer provides real CM API exports as JSON. Drop them
-   in `data/<id>/` (`hosts/` + `metrics/`), create their YAML with
-   `data_source: {type: export, data_dir: data/<id>}`, and demo offline.
+   in `data/<id>/` — `hosts/` + `metrics/`, plus optional `services.json` and
+   `events.json` (for the service-status and alerts checks) — create their YAML
+   with `data_source: {type: export, data_dir: data/<id>}`, and demo offline.
+   Any file that's missing simply makes its check report *no data* rather than a
+   false result.
 2. **Approval → live** — the customer provides a read-only Cloudera service
    account. Fill the `cloudera:` block in their YAML, put credentials in
    `secrets/<id>.env`, and flip `data_source.type` to `api`.

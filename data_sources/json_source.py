@@ -79,7 +79,7 @@ class JsonDataSource(DataSource):
     def get_metrics(self, metric_names: list[str]) -> list[MetricSeries]:
         return parse_cm_json.parse_metrics(self._read("sample_timeseries.json"), metric_names)
 
-    def get_events(self, category: str = "HEALTH_CHECK", alert_only: bool = True) -> list[Event]:
+    def get_events(self, category: str | None = None, alert_only: bool = True) -> list[Event]:
         return parse_cm_json.parse_events(self._read("sample_events.json"), category, alert_only)
 
     # ---- data that would come from SSH on a real cluster ----

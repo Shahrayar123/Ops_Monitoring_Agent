@@ -109,8 +109,13 @@ def test_metrics_spanning_two_categories_are_fetched_in_grouped_queries(api_sour
     assert _sorted(api_source.get_metrics(metrics)) == _sorted(json_source.get_metrics(metrics))
 
 
-def test_events_match_the_json_source(api_source, json_source):
-    assert api_source.get_events() == json_source.get_events()
+def test_events_return_the_active_alerts(api_source, json_source):
+    # The API parser handles the real list-shaped `attributes`, so records aren't
+    # byte-identical to the synthetic JSON source — but the alert events (by id
+    # and severity) must match.
+    api_events = {(e.id, e.severity) for e in api_source.get_events()}
+    json_events = {(e.id, e.severity) for e in json_source.get_events()}
+    assert api_events == json_events
 
 
 def test_disk_usage_matches_the_json_source(api_source, json_source):

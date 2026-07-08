@@ -28,9 +28,10 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 
 from app_logging import setup_logging
+from config import ThresholdUpdateError
 from data_sources import DataSourceError
 
 from api import jobs, service
@@ -47,12 +48,28 @@ app = FastAPI(
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok"}
+    return {"status": "Service is Up and Running"}
 
 
 @app.get("/tenants")
 def list_tenants() -> list[dict]:
     return [service.tenant_summary(t) for t in service.list_tenants()]
+
+
+@app.get("/tenants/{tenant_id}/thresholds")
+def get_thresholds(tenant_id: str) -> dict:
+    _require_tenant(tenant_id)
+    return service.get_thresholds(tenant_id)
+
+
+@app.put("/tenants/{tenant_id}/thresholds")
+def put_thresholds(tenant_id: str, new_values: dict = Body(...)) -> dict:
+    _require_tenant(tenant_id)
+    try:
+        return service.set_thresholds(tenant_id, new_values)
+    except ThresholdUpdateError as exc:
+        # invalid value or write failure — client's problem to fix
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/tenants/{tenant_id}/dates")

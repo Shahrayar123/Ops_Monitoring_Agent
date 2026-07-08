@@ -20,8 +20,9 @@ and where come from .env (see config/llm_config.py).
 
 import json
 import logging
+import re
 import time
-from typing import Literal
+from typing import Literal, Optional
 
 from agents import Agent, OpenAIChatCompletionsModel, Runner, function_tool
 
@@ -30,6 +31,7 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from checks import (
+    CheckResult,
     HealthReport,
     check_alerts,
     check_cpu_percent,
@@ -52,14 +54,23 @@ Your job is purely to make sense of what was found:
 
 1. Connect related problems across areas (e.g. a full disk on a host that also
    explains a storage alert; a silent heartbeat that explains an unhealthy service).
-2. Rank each finding by severity.
+2. Rank each finding by severity: LOW, MEDIUM, HIGH, or CRITICAL.
 3. Write a short, human-readable incident summary.
 4. Recommend concrete remediation steps for each finding.
+
+Severity guidance — read the detail text carefully, especially any counts:
+- If the detail mentions Cloudera CRITICAL alerts/events, or a service/host
+  healthSummary of "BAD", that finding must be HIGH or CRITICAL — never LOW/MEDIUM.
+- A larger number of CRITICAL alerts (tens, not one or two) should push toward
+  CRITICAL, not just HIGH.
+- "CONCERNING" health summaries are typically MEDIUM unless combined with other
+  breaches on the same host/service, which pushes it toward HIGH.
+- Do not average or soften severity because other findings look less severe —
+  judge each finding on its own evidence.
 
 You have tools to re-run any check for fresh data if it helps you connect issues.
 Only call a tool when it would change your analysis — don't call tools speculatively.
 """
-
 
 class AiFinding(BaseModel):
     """One issue (or group of connected issues) in the AI's report."""
@@ -77,6 +88,58 @@ class AiReport(BaseModel):
     overall_summary: str
     findings: list[AiFinding]
     priority_order: list[str]
+
+
+_SEVERITY_ORDER = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+
+
+def _severity_floor(result: CheckResult) -> Optional[str]:
+    """A minimum severity computed directly from the check's own data — a
+    deterministic safety net so the (small, local) LLM can't under-rank a
+    finding the numbers clearly show is serious. The AI can still rank higher;
+    it just can't go below this floor."""
+    detail = result.detail
+
+    if result.task == "alerts":
+        critical = re.search(r"(\d+)\s+critical", detail, re.IGNORECASE)
+        count = int(critical.group(1)) if critical else 0
+        if count >= 10:
+            return "CRITICAL"
+        if count >= 1:
+            return "HIGH"
+        if "important" in detail.lower():
+            return "MEDIUM"
+        return None
+
+    if "healthSummary=BAD" in detail or "=BAD" in detail:
+        return "CRITICAL"
+
+    if result.task == "hdfs_health" and "CONCERNING" in detail:
+        return "HIGH"  # core storage service — treat concerning as serious
+
+    if result.task in ("host_health", "service_status") and "CONCERNING" in detail:
+        return "MEDIUM"
+
+    if result.task == "network" and "unreachable" in detail.lower():
+        return "HIGH"
+
+    return None
+
+
+def _apply_severity_floor(report: HealthReport, ai_report: AiReport) -> AiReport:
+    by_task = {r.task: r for r in report.breached_results}
+    bumped: list[AiFinding] = []
+    for finding in ai_report.findings:
+        check = by_task.get(finding.primary_task)
+        floor = _severity_floor(check) if check else None
+        if floor and _SEVERITY_ORDER.index(floor) > _SEVERITY_ORDER.index(finding.severity):
+            log.info(
+                "Bumping AI severity for '%s': %s -> %s (floor from check data)",
+                finding.primary_task, finding.severity, floor,
+            )
+            finding = finding.model_copy(update={"severity": floor})
+        bumped.append(finding)
+    return ai_report.model_copy(update={"findings": bumped})
 
 
 def _check_tools(source: DataSource, tenant: TenantConfig) -> list:
@@ -195,6 +258,7 @@ async def run_ai_analysis(
         raise
 
     ai_report = result.final_output_as(AiReport)
+    ai_report = _apply_severity_floor(report, ai_report)
     log.info(
         "AI analysis finished for tenant '%s' in %.0fs: %d findings (%s); priority: %s",
         tenant.tenant_id,

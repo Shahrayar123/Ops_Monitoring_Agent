@@ -1,0 +1,68 @@
+{
+  // VS Code debug configurations. Pick one in the "Run and Debug" panel (Ctrl+Shift+D)
+  // and press F5. Set breakpoints (F9) first, then step with F10 / F11 / Shift+F11.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // BEST for understanding the backend: runs debug_report.py, which walks
+      // the whole check flow directly (no HTTP). Step into build/checks/source.
+      "name": "Debug: report (backend, step through checks)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/debug_report.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      // Debug the live FastAPI backend. Note: NO --reload (reload spawns a child
+      // process and breakpoints won't hit). Start the dashboard separately and
+      // interact with it; breakpoints in api/ and checks/ will trigger on each
+      // request.
+      "name": "Debug: FastAPI backend (uvicorn, no reload)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["api.main:app", "--host", "127.0.0.1", "--port", "8000"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      // Debug the whole test suite. Great for stepping through a single check:
+      // put a breakpoint in the check, then debug the matching test.
+      "name": "Debug: all tests (pytest)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["tests/", "-q"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      // Debug just the test file currently open in the editor.
+      "name": "Debug: current test file",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["${file}", "-v"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      // Debug the Streamlit dashboard itself (the frontend). Streamlit reruns the
+      // script on every interaction, so breakpoints in dashboard/app.py hit on
+      // each refresh. The backend it calls must be running separately.
+      "name": "Debug: Streamlit dashboard",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "streamlit",
+      "args": ["run", "dashboard/app.py", "--server.port", "8501"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    }
+  ]
+}
