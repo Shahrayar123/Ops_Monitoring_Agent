@@ -90,10 +90,13 @@ class ClouderaExportSource(DataSource):
         return hosts
 
     def get_services(self, cluster_name: str) -> list[Service]:
-        # Not provided by Ops yet — see has_services().
-        return []
+        if not self.has_services():
+            return []
+        return parse.parse_services(self._read(self._dir / "services.json"), cluster_name)
 
     def get_roles(self, cluster_name: str, service_name: str) -> list[Role]:
+        # A separate roles export isn't provided; the service-status check works
+        # from service-level health checks alone when roles are empty.
         return []
 
     def get_metrics(self, metric_names: list[str]) -> list[MetricSeries]:
@@ -115,9 +118,10 @@ class ClouderaExportSource(DataSource):
             series = [s for s in series if s.metric_name in metric_names]
         return self._trim(series)
 
-    def get_events(self, category: str = "HEALTH_CHECK", alert_only: bool = True) -> list[Event]:
-        # Not provided by Ops yet — see has_events().
-        return []
+    def get_events(self, category: str | None = None, alert_only: bool = True) -> list[Event]:
+        if not self.has_events():
+            return []
+        return parse.parse_events(self._read(self._dir / "events.json"), category, alert_only)
 
     # ---- SSH data: not part of an API export ----
 

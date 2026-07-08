@@ -50,9 +50,12 @@ def test_hdfs_capacity_is_summed_into_one_cluster_series(export_source):
     assert len(hdfs[0].points) >= 2
 
 
-def test_services_and_events_report_as_unavailable(export_source):
-    assert export_source.has_services() is False
-    assert export_source.has_events() is False
+def test_services_and_events_are_available(export_source):
+    # Ops provided both exports, so these light up.
+    assert export_source.has_services() is True
+    assert export_source.has_events() is True
+    assert len(export_source.get_services("bdaktprod-cluster")) > 0
+    assert len(export_source.get_events(alert_only=True)) > 0
 
 
 def test_available_dates_span_the_exported_range(export_source):
@@ -81,10 +84,10 @@ def test_full_run_on_real_data_gives_a_sensible_report(export_source, export_ten
     report = run_all_checks(export_source, export_tenant, now=export_source.reference_now())
 
     by_task = {r.task: r.status for r in report.results}
-    # services/alerts have no source yet
-    assert by_task["service_status"] == "NO_DATA"
-    assert by_task["alerts"] == "NO_DATA"
-    # these have real data and must have actually run
-    for task in ("cpu_percent", "ram_percent", "disk_percent", "hdfs_health", "network"):
+    # every check now has real data — nothing is NO_DATA
+    for task in (
+        "cpu_percent", "ram_percent", "disk_percent", "hdfs_health",
+        "network", "service_status", "alerts",
+    ):
         assert by_task[task] in ("OK", "BREACH")
-    assert report.no_data_count == 2
+    assert report.no_data_count == 0

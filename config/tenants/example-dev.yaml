@@ -14,19 +14,18 @@ data_source:
 
 # Limits the checks compare against. Delete any line to use its default.
 thresholds:
-  cpu_pct: 60.0                      # flag hosts above this CPU %
-  ram_pct: 60.0                      # flag hosts above this memory %
-  disk_pct: 90.0                     # flag mounts fuller than this %
-  disk_mounts:                       # which mounts to watch
-    - /var
-    - /opt
-    - /home
-    - /tmp
-  heartbeat_window_sec: 60           # flag hosts silent longer than this
-  log_size_mb: 1024.0                # flag single log files bigger than this
-  hdfs_growth_pct_window_hours: 24   # window for the storage-growth check
-  hdfs_growth_pct_threshold: 10.0    # flag growth faster than this % per window
-  network_error_rate_threshold: 0.0  # flag any network frame errors
-
+  cpu_pct: 60.0
+  ram_pct: 60.0
+  disk_pct: 90.0
+  disk_mounts:
+  - /var
+  - /opt
+  - /home
+  - /tmp
+  heartbeat_window_sec: 60
+  log_size_mb: 1024.0
+  hdfs_growth_pct_window_hours: 24
+  hdfs_growth_pct_threshold: 10.0
+  network_error_rate_threshold: 0.0
 redis:
   enabled: false

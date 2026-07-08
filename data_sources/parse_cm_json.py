@@ -83,7 +83,7 @@ def parse_metrics(raw: dict, metric_names: list[str]) -> list[MetricSeries]:
     return series
 
 
-def parse_events(raw: dict, category: str, alert_only: bool) -> list[Event]:
+def parse_events(raw: dict, category: str | None, alert_only: bool) -> list[Event]:
     return [
         Event(
             id=item["id"],
@@ -95,5 +95,6 @@ def parse_events(raw: dict, category: str, alert_only: bool) -> list[Event]:
             attributes=item.get("attributes", {}),
         )
         for item in raw["items"]
-        if item["category"] == category and (not alert_only or item["alert"])
+        if (category is None or item["category"] == category)
+        and (not alert_only or item["alert"])
     ]

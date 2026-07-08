@@ -159,7 +159,7 @@ class ClouderaApiSource(DataSource):
         return [parse_cm_export.parse_host_file(item) for item in raw.get("items", [])]
 
     def get_services(self, cluster_name: str) -> list[Service]:
-        return parse_cm_json.parse_services(self._api.get_services(cluster_name), cluster_name)
+        return parse_cm_export.parse_services(self._api.get_services(cluster_name), cluster_name)
 
     def get_roles(self, cluster_name: str, service_name: str) -> list[Role]:
         return parse_cm_json.parse_roles(
@@ -193,11 +193,16 @@ class ClouderaApiSource(DataSource):
         self._metrics_cache[query] = (time.monotonic(), parsed)
         return parsed
 
-    def get_events(self, category: str = "HEALTH_CHECK", alert_only: bool = True) -> list[Event]:
-        query = f"category=={category}"
+    def get_events(self, category: str | None = None, alert_only: bool = True) -> list[Event]:
+        # Matches the real CURL: GET /events?query=alert==true
+        clauses = []
         if alert_only:
-            query = f"alert==true;{query}"
-        return parse_cm_json.parse_events(self._api.get_events(query), category, alert_only)
+            clauses.append("alert==true")
+        if category is not None:
+            clauses.append(f"category=={category}")
+        query = ";".join(clauses) if clauses else "alert==true"
+        # Real events use a list-shaped `attributes`; parse with the export parser.
+        return parse_cm_export.parse_events(self._api.get_events(query), category, alert_only)
 
     # ---- over SSH ----
 

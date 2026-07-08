@@ -15,26 +15,26 @@ thresholds:
   ram_pct: 60.0
   disk_pct: 90.0
   disk_mounts:                # data disks + key OS mounts; virtual mounts skipped
-    - /u01
-    - /u02
-    - /u03
-    - /u04
-    - /u05
-    - /u06
-    - /u07
-    - /u08
-    - /u09
-    - /u10
-    - /u11
-    - /u12
-    - /u13
-    - /u14
-    - /u15
-    - /u16
-    - /var
-    - /opt
-    - /home
-    - /tmp
+  - /u01
+  - /u02
+  - /u03
+  - /u04
+  - /u05
+  - /u06
+  - /u07
+  - /u08
+  - /u09
+  - /u10
+  - /u11
+  - /u12
+  - /u13
+  - /u14
+  - /u15
+  - /u16
+  - /var
+  - /opt
+  - /home
+  - /tmp
   heartbeat_window_sec: 1800        # 30 min — wide enough to absorb the few-minute
                                     # spread between when each host file was exported;
                                     # tighten toward 60s once reading a live cluster

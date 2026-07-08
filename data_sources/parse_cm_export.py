@@ -17,13 +17,59 @@ disk and HDFS checks work without changes.
 
 from collections import defaultdict
 
-from .base import Host, MetricPoint, MetricSeries
+from .base import Event, Host, MetricPoint, MetricSeries, Service
 
 
 def _health_checks(raw: list[dict]):
     from .base import HealthCheck
 
     return [HealthCheck(name=hc["name"], summary=hc["summary"]) for hc in raw]
+
+
+def parse_services(raw: dict, cluster_name: str) -> list[Service]:
+    """The services list from GET /clusters/{cluster}/services?view=FULL."""
+    return [
+        Service(
+            name=item["name"],
+            type=item["type"],
+            cluster_name=item["clusterRef"]["clusterName"],
+            service_state=item.get("serviceState", ""),
+            health_summary=item.get("healthSummary", ""),
+            health_checks=_health_checks(item.get("healthChecks", [])),
+        )
+        for item in raw.get("items", [])
+        if item.get("clusterRef", {}).get("clusterName") == cluster_name
+    ]
+
+
+def parse_events(raw: dict, category: str | None, alert_only: bool) -> list[Event]:
+    """Alert/health events from GET /events?query=alert==true.
+
+    The real CM `attributes` field is a LIST of {"name": ..., "values": [...]}
+    objects; we flatten it to a {name: [values]} dict so the Event model and the
+    checks see a simple mapping. `category=None` means keep every category."""
+    out: list[Event] = []
+    for item in raw.get("items", []):
+        if alert_only and not item.get("alert"):
+            continue
+        if category is not None and item.get("category") != category:
+            continue
+        attrs: dict[str, list[str]] = {}
+        for a in item.get("attributes", []):
+            if isinstance(a, dict) and "name" in a:
+                attrs[a["name"]] = a.get("values", [])
+        out.append(
+            Event(
+                id=item["id"],
+                content=item.get("content", ""),
+                time_occurred=item["timeOccurred"],
+                category=item.get("category", ""),
+                severity=item.get("severity", ""),
+                alert=item.get("alert", False),
+                attributes=attrs,
+            )
+        )
+    return out
 
 
 def parse_host_file(item: dict) -> Host:

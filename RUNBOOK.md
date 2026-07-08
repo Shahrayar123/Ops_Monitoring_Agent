@@ -1,15 +1,12 @@
 # RUNBOOK — end-to-end execution walkthrough
 
-This document traces **exactly what runs, in what order**, from a browser
-refresh all the way down to reading cluster data — for both data paths:
+This document traces **exactly what runs, in what order**, from a browser refresh all the way down to reading cluster data — for both data paths:
 
 - **Extracted JSON path** (`data_source.type: export`) — reads real Cloudera
   Manager API exports saved as files. This is what the demo uses.
 - **Live API path** (`data_source.type: api`) — calls a real Cloudera cluster.
 
-The two paths differ **only** in the data-source object at the bottom. Every
-layer above it — the API endpoints, the checks, the AI, the dashboard — is
-identical. That's the whole design.
+The two paths differ **only** in the data-source object at the bottom. Every layer above it — the API endpoints, the checks, the AI, the dashboard — is identical. That's the whole design.
 
 ---
 
@@ -53,7 +50,7 @@ When the browser opens the dashboard, `main()` in `dashboard/app.py` runs:
 2. Backend `list_tenants()` (`api/main.py`) → `service.list_tenants()` → `load_tenant_configs_from_dir("config/tenants")` (`config/loader.py`) — reads and validates every `*.yaml`.
 3. For each tenant, `service.tenant_summary()` → `source_kind_for(tenant)` (`data_sources/select.py`) decides `json` / `export` / `api` (honoring the optional `USE_JSON` override in `.env`).
 4. Returns `[{tenant_id, display_name, cluster_name, source_kind}, ...]`.
-5. The dashboard draws the sidebar: tenant dropdown, live toggle, refresh interval, and — if the tenant has history — a **date picker** (next section).
+5. The dashboard draws the sidebar: tenant dropdown, live toggle, refresh interval, — if the tenant has history — a **date picker**, and an editable **⚙️ Thresholds** panel (§4b).
 
 ---
 
@@ -98,8 +95,7 @@ This is the heart. The dashboard's `st.fragment(run_every="10s")` calls
 ### 3d. Refresh interval vs. caching — how "fresh" the data really is
 
 The sidebar **Refresh interval** (5 / 10 / 30 / 60s) sets `run_every` on the
-Streamlit fragment. So *every interval*, the dashboard calls the backend and the
-**9 checks re-run**. What that pulls underneath depends on the source:
+Streamlit fragment. So *every interval*, the dashboard calls the backend and the **9 checks re-run**. What that pulls underneath depends on the source:
 
 **Export / JSON tenants (files):** fully fresh every interval. The checks re-read
 the source; a file is re-parsed only if its mtime changed (unchanged files skip
@@ -150,6 +146,20 @@ Triggered by the **Run AI Analysis** button. The AI is slow (minutes on CPU), so
 
 ---
 
+## 4b. Editing thresholds (a write path, not just reads)
+
+The sidebar **⚙️ Thresholds** panel lets the user change what counts as a breach.
+This is the only place the dashboard *writes* back to configuration:
+
+1. On load, the panel calls `GET /tenants/{id}/thresholds` (`service.get_thresholds` → the tenant's `ThresholdsConfig`) and fills the number inputs.
+2. On **Save**, `api_set_thresholds()` → `PUT /tenants/{id}/thresholds` with the edited values.
+3. `service.set_thresholds()` → `update_tenant_thresholds()` (`config/thresholds_writer.py`):
+   - **Validates** the merged values against `ThresholdsConfig` (ranges enforced — e.g. percentages 0–100). Invalid → `ThresholdUpdateError` → HTTP **400**.
+   - Writes them into `config/tenants/<id>.yaml` using **round-trip YAML** (`ruamel.yaml`), updating keys in place so the file's comments survive.
+4. No cache to clear: the next `GET /report` calls `get_tenant()` fresh, so the new limits take effect on the next monitoring run.
+
+---
+
 ## 5. The extracted-JSON path (`type: export`) — bottom of the stack
 
 Used by the `bdaktprod` tenant. Reads real CM API exports saved as files under
@@ -162,15 +172,20 @@ Folder layout it expects:
 data/bdaktprod/
   hosts/*.json          one host resource file each (HostsResource, view=FULL)
   metrics/cpu.json  ram.json  disk.json  hdfs.json  network.json
-  services.json  events.json   (optional — not provided yet → those checks are NO_DATA)
+  services.json         GET /clusters/{c}/services?view=FULL
+  events.json           GET /events?query=alert==true
 ```
+`services.json` / `events.json` are optional — if a file is absent, the matching
+check reports NO_DATA instead of a false result. For `bdaktprod` both are present, so **all nine checks run** on real data.
 
 **What each source method does when a check calls it:**
 - `get_hosts()` → reads `hosts/*.json`, `parse_cm_export.parse_host_file()` each.
 - `get_metrics([names])` → reads the relevant `metrics/*.json` (cached by file **mtime** — only re-read when the file changes on disk, so a 44 MB disk file isn't re-parsed every refresh), parses with `parse_cm_export.*`, then trims to `as_of` via `day_filter.trim_to_day()`.
   - disk: `capacity`/`capacity_used` bytes → computed `fs_bytes_used_percent`.
   - hdfs: per-DataNode capacity → summed into one cluster series.
-- `get_services()` / `get_events()` → `[]` for now (`has_services()`/`has_events()` return False → checks 6/7/8 report NO_DATA).
+- `get_services()` → reads `services.json` → `parse_cm_export.parse_services()` (used by checks 6 & 7). `has_services()` is True when the file exists.
+- `get_events()` → reads `events.json` → `parse_cm_export.parse_events()`, which flattens CM's list-shaped `attributes` into a dict (used by check 8). `has_events()` is True when the file exists.
+- `get_roles()` → `[]` (no roles export; the service-status check works from service-level health alone).
 - `get_disk_usage()` / `ping_hosts()` / `get_log_files()` → `[]` (SSH isn't part of a file export).
 - `available_dates()` → the days present in `cpu.json` (powers the date picker).
 - `reference_now()` → newest host heartbeat (so a days-old export isn't reported as every host being silent).
@@ -193,7 +208,7 @@ Used once a customer provides live access. Same interface, different plumbing.
   - `GET /timeseries?query=...&from=<lookback_days ago>&to=now&desiredRollup=HOURLY`.
   - Caches the result for `metrics_cache_ttl_sec` (default 300s) — since metrics are HOURLY, the ~10 s auto-refresh reuses the cache instead of re-hitting CM.
   - Parses with the **same** `parse_cm_export.*` functions as the file path, then trims to `as_of`.
-- `get_services()` / `get_roles()` / `get_events()` → real `/services`, `/roles`, `/events` calls (checks 6/7/8 light up automatically once the account can read them).
+- `get_services()` / `get_events()` → real `GET /clusters/{c}/services?view=FULL` and `GET /events?query=alert==true`, parsed with the same `parse_cm_export.parse_services()` / `parse_events()` as the file path. `get_roles()` → real `/roles` call.
 - `get_disk_usage()` / `ping_hosts()` / `get_log_files()` → over SSH (`cloudera/ssh_commands.py`), only if the tenant has an `ssh:` block.
 - `available_dates()` → days in the fetched CPU history (date picker works in live mode too).
 - `reference_now()` → newest host heartbeat.
@@ -214,8 +229,7 @@ Used once a customer provides live access. Same interface, different plumbing.
 | Day filter | `day_filter.trim_to_day(as_of)` | `day_filter.trim_to_day(as_of)` (same) |
 | Return type | `list[MetricSeries]` | `list[MetricSeries]` (same) |
 
-The check itself is byte-for-byte identical in both cases — it never knows which
-source answered.
+The check itself is byte-for-byte identical in both cases — it never knows which source answered.
 
 ---
 
@@ -233,17 +247,22 @@ monitoring run's breaches, AI start/finish/failure, data-source choices, errors.
 
 **Onboard a customer:**
 1. `config/tenants/<id>.yaml` — their cluster name, thresholds, `data_source.type`.
-2. Demo stage: `type: export`, drop their JSON exports in `data/<id>/`.
+2. Demo stage: `type: export`, drop their JSON exports in `data/<id>/` (`hosts/`, `metrics/`, and optionally `services.json` / `events.json`).
 3. Live stage: `type: api`, fill the `cloudera:` block, put credentials in `secrets/<id>.env`, flip the type.
 
-**Tests:** `python -m pytest tests/ -q` (runs fully offline; the one live-LLM
-test is deselected by default in CI).
+**Edit thresholds:** from the dashboard sidebar (**⚙️ Thresholds**) or directly
+via `PUT /tenants/{id}/thresholds`. Either way the change is validated and saved back to the tenant YAML; the next monitoring run uses it.
+
+**Tests:** `python -m pytest tests/ -q` (runs fully offline; the one live-LLM test is deselected by default in CI).
 
 **Common issues:**
 | Symptom | Cause | Fix |
 |---|---|---|
 | Dashboard: "Can't reach the monitoring API" | backend not running | start uvicorn on :8000 |
 | `ModuleNotFoundError: app_logging` | uvicorn launched from inside `api/` | run from project root as `api.main:app` |
+| A check shows **NO DATA** | that source file/endpoint isn't available (e.g. no `services.json`) | add the file, or wire the live endpoint |
+| "hdfs service not found" | stale server, or `cluster_name` ≠ services' `clusterRef` | restart the API; check the cluster name matches |
 | Tenant shows ⚠️ "not configured yet" | live-API tenant, cluster unreachable / no creds | fill `cloudera:` + `secrets/<id>.env`, or keep `type: export` |
 | Port already in use | old process still bound | `netstat -ano | findstr :8000`, then `taskkill /F /PID <pid>` |
+| Threshold edit rejected (400) | value out of range (e.g. CPU % > 100) | enter a valid value |
 | AI analysis fails instantly | Ollama not running / model not pulled | start Ollama, `ollama pull qwen2.5:7b` |

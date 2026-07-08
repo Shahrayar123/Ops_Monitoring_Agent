@@ -103,6 +103,14 @@ def api_poll_analysis(job_id: str) -> dict:
     return _request("GET", f"/analysis/{job_id}")
 
 
+def api_get_thresholds(tenant_id: str) -> dict:
+    return _request("GET", f"/tenants/{tenant_id}/thresholds")
+
+
+def api_set_thresholds(tenant_id: str, new_values: dict) -> dict:
+    return _request("PUT", f"/tenants/{tenant_id}/thresholds", json=new_values)
+
+
 # ---------- rendering (identical to before; just fed by API data) ----------
 
 
@@ -275,6 +283,58 @@ def _run_and_poll_analysis(tenant_id: str, as_of: date | None, key: str) -> None
                 return
 
 
+# The editable numeric thresholds, with friendly labels and input steps.
+THRESHOLD_FIELDS = [
+    ("cpu_pct", "CPU limit (%)", 1.0),
+    ("ram_pct", "Memory limit (%)", 1.0),
+    ("disk_pct", "Disk limit (%)", 1.0),
+    ("heartbeat_window_sec", "Heartbeat window (sec)", 30.0),
+    ("log_size_mb", "Max log file size (MB)", 128.0),
+    ("hdfs_growth_pct_threshold", "HDFS growth limit (%)", 1.0),
+    ("hdfs_growth_pct_window_hours", "HDFS growth window (hours)", 1.0),
+    ("network_error_rate_threshold", "Network error rate limit", 1.0),
+]
+
+
+def render_threshold_panel(tenant_id: str) -> None:
+    """Sidebar panel: show the tenant's thresholds and let the user edit them.
+    Saving PUTs to the API, which validates and persists to the tenant YAML."""
+    try:
+        current = api_get_thresholds(tenant_id)
+    except ApiError as exc:
+        st.sidebar.warning(f"Couldn't load thresholds: {exc.detail}")
+        return
+
+    st.sidebar.markdown("---")
+    with st.sidebar.expander("⚙️ Thresholds (editable)", expanded=False):
+        st.caption("Edit and Save to change what counts as a breach. Saved to the tenant config.")
+        with st.form(f"thresholds_{tenant_id}"):
+            new_values: dict = {}
+            for key, label, step in THRESHOLD_FIELDS:
+                is_int = key in ("heartbeat_window_sec", "hdfs_growth_pct_window_hours")
+                # value / min_value / step must all be the same numeric type.
+                new_values[key] = st.number_input(
+                    label,
+                    value=(int(current[key]) if is_int else float(current[key])),
+                    min_value=(0 if is_int else 0.0),
+                    step=(int(step) if is_int else float(step)),
+                )
+            mounts_text = st.text_area(
+                "Disk mounts to watch (one per line)",
+                value="\n".join(current.get("disk_mounts", [])),
+            )
+            saved = st.form_submit_button("💾 Save thresholds", use_container_width=True)
+
+        if saved:
+            new_values["disk_mounts"] = [m.strip() for m in mounts_text.splitlines() if m.strip()]
+            try:
+                api_set_thresholds(tenant_id, new_values)
+                st.success("Thresholds saved. Re-running checks…")
+                st.rerun()
+            except ApiError as exc:
+                st.error(f"Couldn't save: {exc.detail}")
+
+
 def _source_label(kind: str) -> str:
     return {
         "json": "📄 JSON files (demo stage)",
@@ -333,6 +393,9 @@ def main() -> None:
             value=available[-1], min_value=available[0], max_value=available[-1],
             help="The exports hold several days; pick a day to see that day's breaches.",
         )
+
+    # ---- Thresholds panel (view + edit) ----
+    render_threshold_panel(tenant_id)
 
     # ---- Header ----
     st.markdown(
