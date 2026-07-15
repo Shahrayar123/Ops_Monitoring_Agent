@@ -14,7 +14,7 @@ Two related storage problems are covered by this one check:
 from config import TenantConfig
 from data_sources import DataSource
 
-from .result import CheckResult
+from .result import CheckEvidence, CheckResult, EvidenceRow
 
 # If the metric and SSH `df` disagree by more than this many percentage points,
 # mention it in the detail (the metric reading still decides OK/BREACH).
@@ -37,6 +37,7 @@ def check_disk_percent(source: DataSource, tenant: TenantConfig) -> CheckResult:
 
     problems: list[str] = []
     details: list[str] = []
+    rows: list[EvidenceRow] = []
 
     # 1. disks over the limit
     for (hostname, mount), metric_value in metric_readings.items():
@@ -45,18 +46,36 @@ def check_disk_percent(source: DataSource, tenant: TenantConfig) -> CheckResult:
         if ssh_value is not None and abs(ssh_value - metric_value) > ALLOWED_DISAGREEMENT_PP:
             note = f" (SSH df reads {ssh_value:.1f}%)"
 
-        if metric_value > disk_limit:
+        over = metric_value > disk_limit
+        rows.append(
+            EvidenceRow(entity=f"{hostname}:{mount}", value=f"{metric_value:.1f}%{note}", breached=over)
+        )
+        if over:
             problems.append(f"{hostname}:{mount}")
             details.append(f"{hostname}:{mount}: {metric_value:.1f}% (> {disk_limit}%){note}")
 
     # 2. oversized log files
     for log_file in source.get_log_files():
         size_mb = log_file.size_bytes / (1024 * 1024)
-        if size_mb > log_limit_mb:
+        over = size_mb > log_limit_mb
+        rows.append(
+            EvidenceRow(
+                entity=f"{log_file.hostname}:{log_file.path}",
+                value=f"{size_mb:.0f}MB",
+                breached=over,
+            )
+        )
+        if over:
             problems.append(f"{log_file.hostname}:log:{log_file.path}")
             details.append(
                 f"{log_file.hostname}:{log_file.path}: {size_mb:.0f}MB (> {log_limit_mb}MB)"
             )
+
+    evidence = CheckEvidence(
+        source=source.provenance("fs_bytes_used_percent"),
+        keys_checked=["fs_bytes_used_percent", "log_file_size_mb"],
+        rows=rows,
+    )
 
     if not problems:
         return CheckResult(
@@ -69,6 +88,7 @@ def check_disk_percent(source: DataSource, tenant: TenantConfig) -> CheckResult:
                 f"All {len(metric_readings)} watched mounts under {disk_limit}% "
                 f"and all log files under {log_limit_mb}MB."
             ),
+            evidence=evidence,
         )
 
     return CheckResult(
@@ -78,4 +98,5 @@ def check_disk_percent(source: DataSource, tenant: TenantConfig) -> CheckResult:
         threshold=disk_limit,
         breached_entities=problems,
         detail="; ".join(details),
+        evidence=evidence,
     )

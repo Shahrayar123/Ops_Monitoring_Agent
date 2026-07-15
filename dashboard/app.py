@@ -27,7 +27,11 @@ import streamlit as st
 from dotenv import load_dotenv
 
 import styles
-from ai_analysis import AiReport            # shared response model (for rendering only)
+from ai_analysis import (                   # shared response model + display ordering
+    AiReport,
+    order_findings_for_display,
+    priority_labels,
+)
 from checks import HealthReport             # shared response model (for rendering only)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -145,7 +149,29 @@ def render_live_monitor(tenant_id: str, live_on: bool, interval: int, as_of: dat
         unsafe_allow_html=True,
     )
     st.markdown('<div class="section-title">Monitoring Checks</div>', unsafe_allow_html=True)
-    st.markdown(styles.check_grid(report.results, CHECK_LABELS), unsafe_allow_html=True)
+    render_check_cards(report.results)
+
+
+def render_check_cards(results) -> None:
+    """Lay the nine checks out three per row. Each card is followed by a native
+    expander ("Data checked") holding the exact readings behind its verdict —
+    green rows are within limits, red rows are what tripped the breach, and the
+    source file / API endpoint the data came from is shown at the top."""
+    for start in range(0, len(results), 3):
+        cols = st.columns(3, gap="medium")
+        for col, r in zip(cols, results[start:start + 3]):
+            with col:
+                name, icon = CHECK_LABELS.get(r.task, (r.task, "•"))
+                st.markdown(styles.check_card(r, name, icon), unsafe_allow_html=True)
+
+                ev = r.evidence
+                if ev and ev.rows:
+                    over = sum(1 for row in ev.rows if row.breached)
+                    label = f"🔍 Data checked — {len(ev.rows)} reading{'s' if len(ev.rows) != 1 else ''}"
+                    if over:
+                        label += f" · {over} over limit"
+                    with st.expander(label):
+                        st.markdown(styles.evidence_block(ev), unsafe_allow_html=True)
 
 
 def _render_source_error(tenant_id: str, exc: ApiError) -> None:
@@ -232,11 +258,15 @@ def render_ai_section(tenant_id: str, as_of: date | None) -> None:
         f"Analysis for **{day_label}** · generated at {entry.get('generated_at', '—')} "
         f"in {entry.get('seconds', 0):.0f}s"
     )
+    # Order the cards most-urgent first, and build the priority line from that
+    # same order — so the line and the cards below it always agree.
+    ordered = order_findings_for_display(ai_report)
     summary = ai_report.overall_summary
-    if ai_report.priority_order:
-        summary += "  —  Priority order: " + " → ".join(ai_report.priority_order)
+    labels = priority_labels(ordered)
+    if labels:
+        summary += "  —  Priority order: " + " → ".join(labels)
     st.markdown(styles.ai_summary(summary), unsafe_allow_html=True)
-    for finding in ai_report.findings:
+    for finding in ordered:
         st.markdown(styles.finding_card(finding), unsafe_allow_html=True)
 
 

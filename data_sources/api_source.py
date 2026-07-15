@@ -202,7 +202,10 @@ class ClouderaApiSource(DataSource):
             clauses.append(f"category=={category}")
         query = ";".join(clauses) if clauses else "alert==true"
         # Real events use a list-shaped `attributes`; parse with the export parser.
-        return parse_cm_export.parse_events(self._api.get_events(query), category, alert_only)
+        events = parse_cm_export.parse_events(self._api.get_events(query), category, alert_only)
+        # Trim to the viewed day, exactly like get_metrics — so switching a tenant
+        # from export to live API keeps the date filter behaving identically.
+        return day_filter.events_on_or_before(events, self.as_of)
 
     # ---- over SSH ----
 
@@ -249,3 +252,15 @@ class ClouderaApiSource(DataSource):
         """Judge heartbeats against the newest host heartbeat (consistent with
         the export source)."""
         return day_filter.reference_now(self.get_hosts())
+
+    def provenance(self, data_kind: str) -> str:
+        # Metrics: reuse the exact tsquery the checks' data came from.
+        for plan in _METRIC_PLAN:
+            if data_kind in plan["provides"]:
+                return f"GET /timeseries?query={plan['query']}"
+        cluster = self._tenant.cluster_name
+        return {
+            "hosts": "GET /hosts?view=FULL",
+            "services": f"GET /clusters/{cluster}/services",
+            "events": "GET /events?query=alert==true",
+        }.get(data_kind, data_kind)

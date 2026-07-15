@@ -133,6 +133,34 @@ html, body, [data-testid="stAppViewContainer"] {
 .badge.nodata { background:#f1f5f9; color:#64748b; }
 .check-detail { font-size:12.5px; color:var(--muted); margin-top:10px; line-height:1.5; }
 
+/* --- evidence panel (the per-card "what was checked" dropdown) --- */
+/* Tuck the expander under its card and give it the same card-like surface. */
+[data-testid="stExpander"] details {
+  border:1px solid var(--line); border-radius:12px; background:var(--card);
+  box-shadow: var(--shadow); margin-top:-8px; overflow:hidden;
+}
+[data-testid="stExpander"] summary {
+  font-size:12px; font-weight:700; color:var(--brand); padding:8px 14px;
+}
+[data-testid="stExpander"] summary:hover { color:var(--brand-2); }
+.evi-meta { font-size:11.5px; color:var(--muted); margin:2px 0 10px; line-height:1.7; }
+.evi-meta code { background:#f1f5f9; padding:1.5px 7px; border-radius:6px; font-size:11px;
+  color:#334155; word-break:break-word; }
+.evi-wrap { max-height:250px; overflow:auto; border:1px solid var(--line); border-radius:10px; }
+table.evi { width:100%; border-collapse:collapse; font-size:12px; }
+table.evi th { text-align:left; color:var(--faint); font-weight:800; text-transform:uppercase;
+  font-size:9.5px; letter-spacing:.06em; padding:7px 11px; border-bottom:1px solid var(--line);
+  position:sticky; top:0; background:var(--card); z-index:1; }
+table.evi td { padding:6px 11px; border-bottom:1px solid #f1f5f9; color:#334155; vertical-align:middle; }
+table.evi tr:last-child td { border-bottom:none; }
+table.evi td.evi-val { font-weight:700; color:var(--ink); white-space:nowrap; }
+table.evi tr.ok  td { background:#f6fef9; }
+table.evi tr.bad td { background:#fef4f4; }
+table.evi .st-dot { display:inline-block; width:9px; height:9px; border-radius:50%; }
+table.evi tr.ok  .st-dot { background:#22c55e; }
+table.evi tr.bad .st-dot { background:#ef4444; }
+.evi-td-dot { width:22px; text-align:center; }
+
 /* --- AI findings --- */
 .finding { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:15px 17px; margin-bottom:12px; box-shadow: var(--shadow); }
 .finding-head { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
@@ -221,24 +249,48 @@ def kpi_row(evaluated: int, passing: int, breached: int, no_data: int = 0) -> st
     """
 
 
+def check_card(r, name: str, icon: str) -> str:
+    """One check card (header + status badge + detail line). Rendered on its own
+    so each card can be followed by its native expandable evidence panel."""
+    if r.status == "BREACH":
+        cls, label = "breach", "BREACH"
+    elif r.status == "NO_DATA":
+        cls, label = "nodata", "NO DATA"
+    else:
+        cls, label = "ok", "HEALTHY"
+    return (
+        f'<div class="check-card {cls}"><div class="check-head">'
+        f'<span class="check-icon">{icon}</span>'
+        f'<span class="check-name">{_esc(name)}</span>'
+        f'<span class="badge {cls}">{label}</span></div>'
+        f'<div class="check-detail">{_esc(r.detail)}</div></div>'
+    )
+
+
 def check_grid(results, task_meta) -> str:
-    cards = []
-    for r in results:
-        name, icon = task_meta.get(r.task, (r.task, "•"))
-        if r.status == "BREACH":
-            cls, label = "breach", "BREACH"
-        elif r.status == "NO_DATA":
-            cls, label = "nodata", "NO DATA"
-        else:
-            cls, label = "ok", "HEALTHY"
-        cards.append(
-            f'<div class="check-card {cls}"><div class="check-head">'
-            f'<span class="check-icon">{icon}</span>'
-            f'<span class="check-name">{_esc(name)}</span>'
-            f'<span class="badge {cls}">{label}</span></div>'
-            f'<div class="check-detail">{_esc(r.detail)}</div></div>'
-        )
+    cards = [check_card(r, *task_meta.get(r.task, (r.task, "•"))) for r in results]
     return f'<div class="check-grid">{"".join(cards)}</div>'
+
+
+def evidence_block(ev) -> str:
+    """The scrollable "what was checked, and where from" table shown inside a
+    card's expander. Each row is tinted green (within limits) or red (breaching)."""
+    keys = ", ".join(ev.keys_checked)
+    body = []
+    for row in ev.rows:
+        cls = "bad" if row.breached else "ok"
+        body.append(
+            f'<tr class="{cls}"><td class="evi-td-dot"><span class="st-dot"></span></td>'
+            f'<td>{_esc(row.entity)}</td>'
+            f'<td class="evi-val">{_esc(row.value)}</td></tr>'
+        )
+    return (
+        f'<div class="evi-meta">Keys checked: <code>{_esc(keys)}</code><br/>'
+        f'Source: <code>{_esc(ev.source)}</code></div>'
+        f'<div class="evi-wrap"><table class="evi">'
+        f'<thead><tr><th class="evi-td-dot"></th><th>Reading</th><th>Value</th></tr></thead>'
+        f'<tbody>{"".join(body)}</tbody></table></div>'
+    )
 
 
 def ai_summary(text: str) -> str:
