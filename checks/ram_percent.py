@@ -8,7 +8,7 @@ tenant's limit (default 60%).
 from config import TenantConfig
 from data_sources import DataSource
 
-from .result import CheckResult
+from .result import CheckEvidence, CheckResult, EvidenceRow
 
 
 def check_ram_percent(source: DataSource, tenant: TenantConfig) -> CheckResult:
@@ -33,6 +33,15 @@ def check_ram_percent(source: DataSource, tenant: TenantConfig) -> CheckResult:
     }
     over_limit = {host: pct for host, pct in percent_by_host.items() if pct > threshold}
 
+    evidence = CheckEvidence(
+        source=source.provenance("physical_memory_used"),
+        keys_checked=["physical_memory_used", "physical_memory_total"],
+        rows=[
+            EvidenceRow(entity=host, value=f"{pct:.1f}%", breached=pct > threshold)
+            for host, pct in percent_by_host.items()
+        ],
+    )
+
     if not over_limit:
         return CheckResult(
             task="ram_percent",
@@ -41,6 +50,7 @@ def check_ram_percent(source: DataSource, tenant: TenantConfig) -> CheckResult:
             threshold=threshold,
             breached_entities=[],
             detail=f"All {len(percent_by_host)} hosts under {threshold}% RAM used.",
+            evidence=evidence,
         )
 
     return CheckResult(
@@ -50,4 +60,5 @@ def check_ram_percent(source: DataSource, tenant: TenantConfig) -> CheckResult:
         threshold=threshold,
         breached_entities=list(over_limit.keys()),
         detail="; ".join(f"{host}: {pct:.1f}% (> {threshold}%)" for host, pct in over_limit.items()),
+        evidence=evidence,
     )

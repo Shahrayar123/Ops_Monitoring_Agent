@@ -165,3 +165,13 @@ class DataSource(ABC):
         """Distinct days present in the data (used by the dashboard date filter).
         Sources without multi-day history return an empty list."""
         return []
+
+    def provenance(self, data_kind: str) -> str:
+        """Where a kind of data physically comes from, in human terms — a file
+        name for file-backed sources, an API endpoint for the live source.
+
+        `data_kind` is a logical name the checks use: "hosts", "services",
+        "events", or a metric name like "cpu_percent" / "fs_bytes_used_percent".
+        Powers the dashboard's "what was checked, and where from" panel. The
+        default just echoes the kind; each concrete source overrides it."""
+        return data_kind

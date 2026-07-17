@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 import httpx
 import pytest
 
-from ai_analysis import AiReport, run_ai_analysis
+from ai_analysis import AiReport, order_findings_for_display, priority_labels, run_ai_analysis
 from ai_analysis.analyzer import AiFinding, _apply_severity_floor, _severity_floor
 from checks import CheckResult, run_all_checks
 from checks.run_all_checks import HealthReport
@@ -107,6 +107,58 @@ def test_apply_severity_floor_bumps_an_underranked_finding():
     fixed = _apply_severity_floor(report, ai_report)
 
     assert fixed.findings[0].severity == "CRITICAL"
+
+
+# --- display ordering: the finding cards and the priority line must agree ---
+
+
+def _finding(task: str, severity: str) -> AiFinding:
+    return AiFinding(
+        primary_task=task, severity=severity, summary="s",
+        related_tasks=[], recommended_remediation="r",
+    )
+
+
+def test_findings_are_ordered_by_severity_first():
+    ai = AiReport(
+        overall_summary="x",
+        findings=[  # deliberately NOT in severity order
+            _finding("hdfs_health", "MEDIUM"),
+            _finding("host_health", "CRITICAL"),
+            _finding("disk_percent", "HIGH"),
+        ],
+        priority_order=["hdfs_health", "host_health", "disk_percent"],
+    )
+    ordered = order_findings_for_display(ai)
+    assert [f.severity for f in ordered] == ["CRITICAL", "HIGH", "MEDIUM"]
+    assert [f.primary_task for f in ordered] == ["host_health", "disk_percent", "hdfs_health"]
+
+
+def test_priority_order_breaks_ties_within_the_same_severity():
+    ai = AiReport(
+        overall_summary="x",
+        findings=[_finding("alerts", "CRITICAL"), _finding("host_health", "CRITICAL")],
+        # both CRITICAL — the AI's priority_order decides which comes first
+        priority_order=["host_health", "alerts"],
+    )
+    ordered = order_findings_for_display(ai)
+    assert [f.primary_task for f in ordered] == ["host_health", "alerts"]
+
+
+def test_priority_line_matches_the_card_order():
+    ai = AiReport(
+        overall_summary="x",
+        findings=[
+            _finding("host_health", "CRITICAL"),
+            _finding("disk_percent", "HIGH"),
+            _finding("service_status", "HIGH"),
+            _finding("alerts", "CRITICAL"),
+        ],
+        priority_order=["service_status", "host_health", "alerts", "disk_percent"],
+    )
+    ordered = order_findings_for_display(ai)
+    # The line is built from the ordered cards, so the two can never disagree.
+    assert priority_labels(ordered) == [f.primary_task for f in ordered]
 
 
 def test_apply_severity_floor_never_lowers_a_higher_ai_severity():

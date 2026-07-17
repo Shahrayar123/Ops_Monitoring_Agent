@@ -9,7 +9,7 @@ counts and shows a few example alert summaries rather than dumping all of them.
 from config import TenantConfig
 from data_sources import DataSource
 
-from .result import CheckResult
+from .result import CheckEvidence, CheckResult, EvidenceRow
 
 # Severities that count as a real problem.
 SERIOUS = {"CRITICAL", "IMPORTANT"}
@@ -40,6 +40,17 @@ def check_alerts(source: DataSource, tenant: TenantConfig) -> CheckResult:
     serious = [a for a in alerts if a.severity in SERIOUS]
 
     if not serious:
+        evidence = CheckEvidence(
+            source=source.provenance("events"),
+            keys_checked=["severity", "alert"],
+            rows=[
+                EvidenceRow(
+                    entity="active alerts",
+                    value=f"{len(alerts)} events, 0 critical/important",
+                    breached=False,
+                )
+            ],
+        )
         return CheckResult(
             task="alerts",
             status="OK",
@@ -47,11 +58,20 @@ def check_alerts(source: DataSource, tenant: TenantConfig) -> CheckResult:
             threshold="0 critical/important",
             breached_entities=[],
             detail=f"No critical or important active alerts ({len(alerts)} lower-severity events).",
+            evidence=evidence,
         )
 
     critical = sum(1 for a in serious if a.severity == "CRITICAL")
     important = sum(1 for a in serious if a.severity == "IMPORTANT")
     examples = " | ".join(_summary_of(a) for a in serious[:MAX_EXAMPLES])
+
+    evidence = CheckEvidence(
+        source=source.provenance("events"),
+        keys_checked=["severity", "alert"],
+        rows=[
+            EvidenceRow(entity=a.severity, value=_summary_of(a), breached=True) for a in serious
+        ],
+    )
 
     return CheckResult(
         task="alerts",
@@ -60,4 +80,5 @@ def check_alerts(source: DataSource, tenant: TenantConfig) -> CheckResult:
         threshold="0 critical/important",
         breached_entities=[a.id for a in serious],
         detail=f"{critical} critical, {important} important active alerts. Examples: {examples}",
+        evidence=evidence,
     )

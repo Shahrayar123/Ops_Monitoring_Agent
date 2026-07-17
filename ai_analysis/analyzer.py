@@ -126,6 +126,36 @@ def _severity_floor(result: CheckResult) -> Optional[str]:
     return None
 
 
+def order_findings_for_display(ai_report: AiReport) -> list[AiFinding]:
+    """The findings sorted most-urgent first, so the cards and the summary's
+    priority line always agree and a CRITICAL never sits below a MEDIUM.
+
+    Order: severity (CRITICAL → LOW) first — this is the floor-guarded severity,
+    the trustworthy signal — then the model's own priority_order as a tiebreak
+    within the same severity, then the original order to keep it stable."""
+    prio_index = {task: i for i, task in enumerate(ai_report.priority_order)}
+
+    def sort_key(item: tuple[int, AiFinding]):
+        idx, finding = item
+        severity = (
+            _SEVERITY_ORDER.index(finding.severity)
+            if finding.severity in _SEVERITY_ORDER else -1
+        )
+        return (-severity, prio_index.get(finding.primary_task, len(prio_index)), idx)
+
+    return [finding for _, finding in sorted(enumerate(ai_report.findings), key=sort_key)]
+
+
+def priority_labels(findings: list[AiFinding]) -> list[str]:
+    """The primary tasks of the given findings, in order, de-duplicated — used to
+    render the summary's 'Priority order' line straight from the displayed cards."""
+    labels: list[str] = []
+    for finding in findings:
+        if finding.primary_task not in labels:
+            labels.append(finding.primary_task)
+    return labels
+
+
 def _apply_severity_floor(report: HealthReport, ai_report: AiReport) -> AiReport:
     by_task = {r.task: r for r in report.breached_results}
     bumped: list[AiFinding] = []
@@ -149,47 +179,47 @@ def _check_tools(source: DataSource, tenant: TenantConfig) -> list:
     @function_tool
     def get_host_health() -> str:
         """Re-run the host health check (health verdict per machine)."""
-        return check_host_health(source, tenant).model_dump_json()
+        return check_host_health(source, tenant).model_dump_json(exclude={"evidence"})
 
     @function_tool
     def get_heartbeat() -> str:
         """Re-run the heartbeat check (time since each machine last reported)."""
-        return check_heartbeat(source, tenant).model_dump_json()
+        return check_heartbeat(source, tenant).model_dump_json(exclude={"evidence"})
 
     @function_tool
     def get_cpu_percent() -> str:
         """Re-run the CPU usage check per machine."""
-        return check_cpu_percent(source, tenant).model_dump_json()
+        return check_cpu_percent(source, tenant).model_dump_json(exclude={"evidence"})
 
     @function_tool
     def get_ram_percent() -> str:
         """Re-run the memory usage check per machine."""
-        return check_ram_percent(source, tenant).model_dump_json()
+        return check_ram_percent(source, tenant).model_dump_json(exclude={"evidence"})
 
     @function_tool
     def get_disk_percent() -> str:
         """Re-run the disk fullness / log size check per machine and mount."""
-        return check_disk_percent(source, tenant).model_dump_json()
+        return check_disk_percent(source, tenant).model_dump_json(exclude={"evidence"})
 
     @function_tool
     def get_hdfs_health() -> str:
         """Re-run the HDFS health and storage-growth check."""
-        return check_hdfs_health(source, tenant).model_dump_json()
+        return check_hdfs_health(source, tenant).model_dump_json(exclude={"evidence"})
 
     @function_tool
     def get_service_status() -> str:
         """Re-run the service and role status check for every service."""
-        return check_service_status(source, tenant).model_dump_json()
+        return check_service_status(source, tenant).model_dump_json(exclude={"evidence"})
 
     @function_tool
     def get_alerts() -> str:
         """Re-run the cluster alerts check."""
-        return check_alerts(source, tenant).model_dump_json()
+        return check_alerts(source, tenant).model_dump_json(exclude={"evidence"})
 
     @function_tool
     def get_network() -> str:
         """Re-run the network errors and reachability check."""
-        return check_network(source, tenant).model_dump_json()
+        return check_network(source, tenant).model_dump_json(exclude={"evidence"})
 
     return [
         get_host_health,
@@ -231,8 +261,12 @@ async def run_ai_analysis(
 
     analyst = build_analyst(source, tenant, llm)
 
+    # The per-reading `evidence` powers the dashboard's traceability panel; the
+    # AI doesn't need it (it reasons from detail/counts) and it would bloat the
+    # prompt, so it's excluded here.
     problems_json = json.dumps(
-        [r.model_dump(mode="json") for r in report.breached_results], indent=2
+        [r.model_dump(mode="json", exclude={"evidence"}) for r in report.breached_results],
+        indent=2,
     )
     prompt = (
         f"Tenant: {tenant.display_name} (cluster: {tenant.cluster_name})\n"
