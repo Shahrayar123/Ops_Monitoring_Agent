@@ -1,12 +1,30 @@
-openai-agents
+# --- monitoring engine (checks/, config/, data_sources/, cloudera/) ---
 openai
 httpx
-paramiko 
+paramiko
 pydantic
 pyyaml
 pytest
-streamlit
 python-dotenv
-fastapi
+# Pinned: FastAPI 0.139 + Starlette 1.x break include_router; 0.115.6/0.41.3 is the tested combo.
+fastapi==0.115.6
+starlette==0.41.3
 uvicorn
 ruamel.yaml
+
+# --- product backend (backend/) ---
+sqlalchemy>=2.0
+alembic
+psycopg[binary]          # PostgreSQL driver (SQLite fallback needs nothing)
+pydantic-settings
+email-validator          # EmailStr validation
+pyjwt                    # access/refresh tokens
+bcrypt                   # password hashing
+cryptography             # Fernet encryption for stored secrets
+python-multipart
+anthropic
+openpyxl                 # parse the Ops known-issues .xlsx into the AI knowledge base
+openai-agents            # per-KPI + incident agents (app/ai/agent_runner.py) — DO NOT add
+                          # openai-agents[litellm] or [any-llm] here; both break this repo's
+                          # pinned fastapi/starlette combo or fail to build on this Python — see
+                          # backend/app/ai/agent_runner.py's module docstring for the Anthropic exception

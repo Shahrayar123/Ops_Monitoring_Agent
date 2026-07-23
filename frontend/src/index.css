@@ -1,0 +1,117 @@
+@import 'tailwindcss';
+
+/* Class-based dark mode: toggling `.dark` on <html> switches the theme
+   (persisted in localStorage), rather than following the OS only. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Brand design tokens — the BTC indigo/blue identity, reused from the product
+   dashboard so the whole suite reads as one system. */
+@theme {
+  --color-brand-50: #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-200: #c7d2fe;
+  --color-brand-300: #a5b4fc;
+  --color-brand-400: #818cf8;
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+  --color-brand-800: #3730a3;
+  --color-brand-900: #312e81;
+
+  --color-accent-500: #2563eb;
+  --color-accent-600: #1d4ed8;
+
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --radius-xl2: 1.1rem;
+}
+
+/* Semantic surface tokens, themed for light and dark. Components use
+   var(--surface), var(--ink), etc. so a single block controls the whole look. */
+:root {
+  --page: #f4f6fb;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --ink: #0f172a;
+  --muted: #64748b;
+  --faint: #94a3b8;
+  --line: #e6eaf0;
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 16px -8px rgba(15, 23, 42, 0.1);
+  --shadow-lg: 0 20px 45px -20px rgba(37, 99, 235, 0.45);
+}
+
+.dark {
+  --page: #0b1120;
+  --surface: #131a2b;
+  --surface-2: #1a2336;
+  --ink: #e8edf7;
+  --muted: #94a3b8;
+  --faint: #64748b;
+  --line: #24304a;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 20px 45px -20px rgba(0, 0, 0, 0.7);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--page);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Reusable surface helper */
+@utility card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl2);
+  box-shadow: var(--shadow);
+}
+
+/* Thin, theme-aware scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--faint) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 999px;
+}
+
+/* Shared keyframe animations */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+/* NOTE: no `both`/`forwards` fill on fade-in. A persisted transform (even
+   translateY(0)) turns the element into a containing block for position:fixed
+   descendants, which would trap modals inside the page wrapper instead of the
+   viewport. The element's resting state already matches the animation's end
+   frame, so dropping the fill is visually identical. */
+.animate-fade-in { animation: fade-in 0.35s ease; }
+.animate-toast-in { animation: toast-in 0.25s ease both; }
+
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--line) 37%, var(--surface-2) 63%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s infinite linear;
+}

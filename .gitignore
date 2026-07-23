@@ -18,3 +18,7 @@ data/bdaktprod/
 data/Sample APIs data/
 data/Service Status/
 data/Alerts & Health Checks/
+
+# Product backend: local dev database + uploaded tenant files.
+backend/ops.db
+backend/uploads/

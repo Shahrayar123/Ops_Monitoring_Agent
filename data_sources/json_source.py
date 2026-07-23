@@ -28,8 +28,8 @@ from .base import (
 # Project root (two levels up from this file: data_sources/json_source.py ->
 # data_sources/ -> project root). A relative data_dir like "data" in a tenant's
 # YAML is resolved against THIS, not against whatever folder the app happens
-# to be launched from — so it works the same whether started via
-# `streamlit run dashboard/app.py`, a desktop shortcut, or a scheduled task.
+# to be launched from — so it works the same regardless of how the backend
+# was started (uvicorn, a desktop shortcut, or a scheduled task).
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Every file a tenant's data folder must contain.
