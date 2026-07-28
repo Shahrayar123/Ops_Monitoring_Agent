@@ -1,8 +1,8 @@
 """Runs every check and bundles the results into one HealthReport.
 
-This is plain deterministic Python — no AI anywhere in this file. The dashboard
-calls run_all_checks() on every refresh; the AI in ai_analysis/ is only invoked
-afterwards, and only if the report contains breaches.
+This is plain deterministic Python — no AI anywhere in this file. The backend
+calls run_all_checks() on every refresh; the AI (backend/app/ai/) is only
+invoked afterwards, and only if the report contains breaches.
 """
 
 import logging

@@ -28,8 +28,8 @@ from .base import (
 # Project root (two levels up from this file: data_sources/json_source.py ->
 # data_sources/ -> project root). A relative data_dir like "data" in a tenant's
 # YAML is resolved against THIS, not against whatever folder the app happens
-# to be launched from — so it works the same whether started via
-# `streamlit run dashboard/app.py`, a desktop shortcut, or a scheduled task.
+# to be launched from — so it works the same regardless of how the backend
+# was started (uvicorn, a desktop shortcut, or a scheduled task).
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Every file a tenant's data folder must contain.
@@ -41,6 +41,24 @@ REQUIRED_FILES = [
     "sample_events.json",
     "sample_ssh_results.json",
 ]
+
+# Which sample file each logical data kind is read from — powers the dashboard's
+# "where did this come from" panel. All time-series metrics share one file here.
+_PROVENANCE = {
+    "hosts": "sample_hosts.json",
+    "services": "sample_services.json",
+    "roles": "sample_roles.json",
+    "events": "sample_events.json",
+    "cpu_percent": "sample_timeseries.json",
+    "physical_memory_used": "sample_timeseries.json",
+    "physical_memory_total": "sample_timeseries.json",
+    "fs_bytes_used_percent": "sample_timeseries.json",
+    "dfs_capacity_used": "sample_timeseries.json",
+    "total_bytes_receive_rate_across_network_interfaces": "sample_timeseries.json",
+    "disk_usage": "sample_ssh_results.json",
+    "ping": "sample_ssh_results.json",
+    "log_files": "sample_ssh_results.json",
+}
 
 
 class JsonDataSource(DataSource):
@@ -92,3 +110,12 @@ class JsonDataSource(DataSource):
 
     def get_log_files(self) -> list[LogFile]:
         return [LogFile(**entry) for entry in self._read("sample_ssh_results.json")["log_files"]]
+
+    # ---- metadata ----
+
+    def provenance(self, data_kind: str) -> str:
+        name = _PROVENANCE.get(data_kind, data_kind)
+        try:
+            return str((self._data_dir / name).relative_to(PROJECT_ROOT)).replace("\\", "/")
+        except ValueError:  # data_dir outside the project — show the folder + file
+            return f"{self._data_dir.name}/{name}"

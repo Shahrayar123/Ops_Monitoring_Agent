@@ -7,7 +7,7 @@ above the tenant's limit (default 60%).
 from config import TenantConfig
 from data_sources import DataSource
 
-from .result import CheckResult
+from .result import CheckEvidence, CheckResult, EvidenceRow
 
 
 def check_cpu_percent(source: DataSource, tenant: TenantConfig) -> CheckResult:
@@ -17,6 +17,15 @@ def check_cpu_percent(source: DataSource, tenant: TenantConfig) -> CheckResult:
     latest_by_host = {s.entity_name: s.points[-1].value for s in series if s.points}
     over_limit = {host: value for host, value in latest_by_host.items() if value > threshold}
 
+    evidence = CheckEvidence(
+        source=source.provenance("cpu_percent"),
+        keys_checked=["cpu_percent"],
+        rows=[
+            EvidenceRow(entity=host, value=f"{value:.1f}%", breached=value > threshold)
+            for host, value in latest_by_host.items()
+        ],
+    )
+
     if not over_limit:
         return CheckResult(
             task="cpu_percent",
@@ -25,6 +34,7 @@ def check_cpu_percent(source: DataSource, tenant: TenantConfig) -> CheckResult:
             threshold=threshold,
             breached_entities=[],
             detail=f"All {len(latest_by_host)} hosts under {threshold}% CPU.",
+            evidence=evidence,
         )
 
     return CheckResult(
@@ -34,4 +44,5 @@ def check_cpu_percent(source: DataSource, tenant: TenantConfig) -> CheckResult:
         threshold=threshold,
         breached_entities=list(over_limit.keys()),
         detail="; ".join(f"{host}: {value:.1f}% (> {threshold}%)" for host, value in over_limit.items()),
+        evidence=evidence,
     )

@@ -42,6 +42,21 @@ from .base import (
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+# Which file inside the tenant's export folder each logical data kind is read
+# from — powers the dashboard's "where did this come from" panel.
+_PROVENANCE = {
+    "hosts": "hosts/*.json",
+    "services": "services.json",
+    "events": "events.json",
+    "cpu_percent": "metrics/cpu.json",
+    "physical_memory_used": "metrics/ram.json",
+    "physical_memory_total": "metrics/ram.json",
+    "fs_bytes_used_percent": "metrics/disk.json",
+    "dfs_capacity": "metrics/hdfs.json",
+    "dfs_capacity_used": "metrics/hdfs.json",
+    "total_bytes_receive_rate_across_network_interfaces": "metrics/network.json",
+}
+
 
 class ClouderaExportSource(DataSource):
     def __init__(self, data_dir: str | Path):
@@ -121,7 +136,9 @@ class ClouderaExportSource(DataSource):
     def get_events(self, category: str | None = None, alert_only: bool = True) -> list[Event]:
         if not self.has_events():
             return []
-        return parse.parse_events(self._read(self._dir / "events.json"), category, alert_only)
+        events = parse.parse_events(self._read(self._dir / "events.json"), category, alert_only)
+        # Same day filter metrics get: only alerts up to the end of the viewed day.
+        return day_filter.events_on_or_before(events, self.as_of)
 
     # ---- SSH data: not part of an API export ----
 
@@ -141,6 +158,10 @@ class ClouderaExportSource(DataSource):
 
     def has_events(self) -> bool:
         return (self._dir / "events.json").is_file()
+
+    def provenance(self, data_kind: str) -> str:
+        rel = _PROVENANCE.get(data_kind, data_kind)
+        return f"{self._dir.name}/{rel}"
 
     def available_dates(self) -> list[date]:
         """The distinct days present in the CPU metric (cheap and covers all hosts)."""

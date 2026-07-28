@@ -8,7 +8,7 @@ run_all_checks.py runs every check in one go and bundles the results into a
 HealthReport — that's what the dashboard shows and what the AI analyzes.
 """
 
-from .result import CheckResult
+from .result import CheckEvidence, CheckResult, EvidenceRow
 from .host_health import check_host_health
 from .heartbeat import check_heartbeat
 from .cpu_percent import check_cpu_percent
@@ -22,6 +22,8 @@ from .run_all_checks import ALL_CHECKS, HealthReport, run_all_checks
 
 __all__ = [
     "CheckResult",
+    "CheckEvidence",
+    "EvidenceRow",
     "check_host_health",
     "check_heartbeat",
     "check_cpu_percent",

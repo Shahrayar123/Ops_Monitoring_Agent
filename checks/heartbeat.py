@@ -14,7 +14,7 @@ from typing import Optional
 from config import TenantConfig
 from data_sources import DataSource
 
-from .result import CheckResult
+from .result import CheckEvidence, CheckResult, EvidenceRow
 
 
 def check_heartbeat(
@@ -32,6 +32,19 @@ def check_heartbeat(
         if age_sec > window_sec:
             silent_hosts.append(host)
 
+    evidence = CheckEvidence(
+        source=source.provenance("hosts"),
+        keys_checked=["lastHeartbeat"],
+        rows=[
+            EvidenceRow(
+                entity=h.hostname,
+                value=f"{age_by_host[h.hostname]:.0f}s ago",
+                breached=age_by_host[h.hostname] > window_sec,
+            )
+            for h in hosts
+        ],
+    )
+
     if not silent_hosts:
         return CheckResult(
             task="heartbeat",
@@ -40,6 +53,7 @@ def check_heartbeat(
             threshold=window_sec,
             breached_entities=[],
             detail=f"All {len(hosts)} hosts heartbeated within {window_sec}s.",
+            evidence=evidence,
         )
 
     return CheckResult(
@@ -52,4 +66,5 @@ def check_heartbeat(
             f"{h.hostname}: {age_by_host[h.hostname]:.0f}s since last heartbeat (> {window_sec}s)"
             for h in silent_hosts
         ),
+        evidence=evidence,
     )

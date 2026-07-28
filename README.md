@@ -1,140 +1,296 @@
 # Cloudera Ops Monitoring Agent
 
-Automated health monitoring for Cloudera clusters, with AI-assisted incident analysis. Built to be sold as a service to multiple customers: everything customer-specific is configuration, never code.
+Automated health monitoring for Cloudera clusters, with **governed, agentic AI incident analysis**. Built to be sold as a service to multiple customers: everything customer-specific is data/configuration in a database, never code.
 
-> For a deep, function-by-function trace of what runs in what order (both data, paths), see **[RUNBOOK.md](RUNBOOK.md)**.
+The product is a **FastAPI backend + React (Vite) frontend + PostgreSQL** (with a SQLite dev fallback). It wraps a deterministic monitoring **engine** (the `checks/`, `config/`, `data_sources/`, `cloudera/` packages) and adds accounts, multi-tenant clusters, plans, per-user access control, a multi-provider LLM layer, usage metering, and end-to-end logging.
+
+> For a function-by-function trace of **what runs in what order** — from process start, through a browser request, down to reading cluster data and running the AI — see **[RUNBOOK.md](RUNBOOK.md)**.
+
+---
 
 ## How it works (30-second version)
 
 ```
- data source            checks (plain Python)           AI (only on problems)
-┌──────────────┐      ┌──────────────────────┐        ┌─────────────────────┐
-│ JSON exports │      │ 9 checks compare the │  any   │ AI connects related │
-│   or a live  │ ───> │ data against limits  │ ────>  │ problems, ranks them │
-│   cluster    │      │ from the tenant YAML │ breach │ & suggests fixes     │
-└──────────────┘      └──────────────────────┘        └─────────────────────┘
+ data source            checks (plain Python)            AI (only on problems)
+┌──────────────┐      ┌──────────────────────┐        ┌──────────────────────┐
+│ uploaded CM  │      │ 9 checks compare the │  any   │ agentic AI connects  │
+│ export files │ ───> │ data against limits  │ ────>  │ related problems,    │
+│   OR a live  │      │ from the tenant's DB │ breach │ ranks severity &     │
+│   CM cluster │      │ thresholds           │        │ suggests fixes       │
+└──────────────┘      └──────────────────────┘        └──────────────────────┘
                               │ no breaches
                               └────> "all green" (the AI is never called)
 ```
 
-1. A **data source** provides cluster data — machines, services, metrics, events. The checks read a common interface, so the source is swappable.
-2. **Nine checks** — plain, deterministic Python — compare that data against
-   the customer's configured limits (CPU %, disk %, heartbeat window, ...).
-   No AI is involved in detection, so results are fast and repeatable.
-3. Only when checks find problems does the **AI analyst** run: it connects related problems, ranks severity, writes an incident summary, and suggests remediation. On a healthy cluster the AI is never called.
+1. A **data source** provides cluster data — hosts, services, metrics, events. The checks read one common interface, so the source is swappable.
+2. **Nine checks** — plain, deterministic Python — compare that data against the tenant's configured limits (CPU %, disk %, heartbeat window, …). **No AI is involved in detection**, so results are fast and repeatable.
+3. Only when checks find breaches does the **AI analyst** run: specialized per-KPI agents (and one incident coordinator) investigate with tools, connect related problems, rank severity, and suggest remediation. On a healthy cluster the AI is never called.
 
-## The three data sources
+The AI **never decides what is broken** — a deterministic check already did that, and a **severity floor** computed from the check's own data means the model can raise severity but never under-rate a finding. That is the "governed" part.
 
-Every tenant picks one via `data_source.type` in its YAML. All three return the **same record types**, so the checks, AI, and dashboard never change between them.
+---
 
-| `type` | Class | Reads from | Used for |
+## Architecture at a glance
+
+```
+                 Browser (React SPA, Vite)
+                          │  /api/*  (same-origin; Vite dev-proxy or prod reverse-proxy)
+                          ▼
+              FastAPI app  (backend/app/main.py)
+    ┌─────────────────────────────────────────────────────────┐
+    │  api/routes/*   auth · monitoring · analysis · admin …   │
+    │  api/deps.py    JWT auth, current-user, admin guard      │
+    │  core/          config · logging · errors · crypto · JWT │
+    │  db/            SQLAlchemy models + session (Postgres)   │
+    │  llm/           model registry · access · usage · keys   │
+    │  ai/            agentic analyzer · agents · tools · jobs  │
+    │  engine/        bridge  ── adapts a DB Tenant to ↓ ──────┼──┐
+    └─────────────────────────────────────────────────────────┘  │
+                                                                  ▼
+              Monitoring engine (unchanged, provider-agnostic):
+              checks/  config/  data_sources/  cloudera/
+                          │
+                          ▼
+              Cluster data:  uploaded export files  OR  live CM API + SSH
+```
+
+The **engine** (`checks/`, `config/`, `data_sources/`, `cloudera/`) is the original, standalone monitoring core. The **product** (`backend/app/`) never re-implements monitoring — `backend/app/engine/bridge.py` builds an engine `TenantConfig`/data source from a database `Tenant` row and calls the engine. Swapping a customer from "uploaded files" to "live cluster" is a single field on that row; nothing above the data source changes.
+
+---
+
+## Tech stack
+
+### Frontend (`frontend/`)
+
+| Concern | Technology |
+|---|---|
+| UI library | **React 19** (+ react-dom) |
+| Language | **JavaScript + JSX** — not TypeScript (`@types/*` present only for editor autocomplete) |
+| Build tool / dev server | **Vite 8** (`@vitejs/plugin-react`), with HMR and an `/api` → backend dev proxy |
+| Routing | **React Router 7** (`react-router-dom`) + auth route guards |
+| Server state / data fetching | **TanStack React Query 5** |
+| HTTP client | **Axios** (single instance with JWT attach + auto token-refresh, `lib/api.js`) |
+| Styling | **Tailwind CSS 4** (`@tailwindcss/vite`) + CSS design tokens |
+| Theming | Class-based dark mode (`.dark` on `<html>`, persisted in localStorage) |
+| App state | **React Context** providers (Auth, Analysis, Theme, Toast) + localStorage — no Redux/Zustand |
+| Linter | **oxlint** |
+
+### Backend (`backend/app/`)
+
+| Concern | Technology |
+|---|---|
+| Web framework | **FastAPI** (pinned `0.115.6` / Starlette `0.41.3` — see `requirements.txt`) |
+| Server | **Uvicorn** |
+| Language | **Python 3.12+** (dev env: 3.14) |
+| Validation / schemas | **Pydantic v2** (+ `pydantic-settings` for config) |
+| ORM | **SQLAlchemy 2.0** (typed `Mapped[...]` models) |
+| Migrations | **Alembic** |
+| Auth | **PyJWT** (access + refresh tokens) + **bcrypt** (password hashing) |
+| Secrets at rest | **cryptography** (Fernet) — encrypts stored API keys / CM passwords |
+| AI / LLM | **OpenAI Agents SDK** (`openai-agents`) for agentic analysis, **Anthropic SDK** for the Claude direct-call path, OpenAI-compatible transport for all other providers |
+| Knowledge base parsing | **openpyxl** (known-issues `.xlsx`) |
+| Cluster access (engine) | **httpx** (CM REST) + **paramiko** (SSH) + **ruamel.yaml** / **pyyaml** |
+
+### Database
+
+| Concern | Technology |
+|---|---|
+| Production | **PostgreSQL** (driver: `psycopg[binary]`) |
+| Local dev fallback | **SQLite** — used automatically when no `DATABASE_URL` is set (`backend/ops.db`) |
+
+Models use only portable column types (`JSON`, `String`, `DateTime`), so the same schema and Alembic migrations run unchanged on both PostgreSQL and the SQLite dev fallback.
+
+---
+
+## Repository layout
+
+| Path | What's in it |
+|---|---|
+| **`backend/app/`** | The FastAPI product (see the sub-table below) |
+| `backend/alembic/` | Database migrations (`alembic upgrade head`) |
+| `backend/tests/` | Pytest suite for the product (auth, access, AI, monitoring, logging, …) |
+| `backend/uploads/` | Admin-uploaded tenant export files (gitignored) |
+| **`frontend/`** | React + Vite single-page app (`frontend/src/`) |
+| **`checks/`** | The nine checks + `run_all_checks()` → `HealthReport` (engine) |
+| **`config/`** | Engine tenant schema/loader + the demo tenant YAML (engine) |
+| **`data_sources/`** | The data sources (export files, live API, JSON) + parsing + day filter (engine) |
+| **`cloudera/`** | Live-cluster access: CM REST client, SSH commands, metric queries (engine) |
+| `knowledge/` | The AI knowledge base (best-practices `.md` + actionable known-issues `.xlsx`) |
+| `data/` | Sample data + the `bdaktprod` demo export the seed tenant points at |
+| `context/` | **Generated:** append-only `breach_history.csv` (every AI analysis; gitignored) |
+| `logs/` | **Generated:** rotating JSON logs, 7-day retention (gitignored) |
+| `secrets/` | Legacy per-tenant credential files for the engine's standalone mode (gitignored) |
+
+### Inside `backend/app/`
+
+| Package | Responsibility |
+|---|---|
+| `main.py` | **App entry point** — builds the FastAPI app, configures logging, mounts routers |
+| `core/` | `config` (settings/.env), `logging_config` + `log_context` (structured logs), `errors` (request-id + error envelope), `security` (JWT + bcrypt), `crypto` (Fernet at-rest encryption), `email` |
+| `db/` | `models.py` (all tables), `base.py` (engine/session, `get_db`) |
+| `api/routes/` | HTTP endpoints, grouped by area (auth, monitoring, analysis, settings, and four admin routers) |
+| `api/deps.py` | Auth dependencies: `get_current_user`, `require_admin` |
+| `engine/` | `bridge.py` (DB Tenant → engine), `kpi_access.py` (per-user KPI visibility), `uploads.py` (file handling) |
+| `llm/` | `registry.py` (every model the product can use), `access.py` (effective per-user access), `usage.py` (metering + limits), `settings.py` (per-user keys/priority), `providers.py`/`runner.py` (chat transport) |
+| `ai/` | `analyzer.py` (orchestrates one analysis), `agent_runner.py` (fallback chain), `kpi_agents.py` (agent definitions), `agent_tools.py` (investigation tools), `jobs.py` (background threads), `knowledge.py`, `dependencies.py`, `trends.py`, `breach_history.py`, `models.py` (output schemas + severity floor) |
+| `schemas/` | Pydantic request/response models |
+| `seed.py` | First-run: run migrations, create the admin, a demo plan, and the `bdaktprod` demo tenant |
+
+---
+
+## The monitoring engine (deterministic, no AI)
+
+`run_all_checks()` runs **nine checks in a fixed order**, each reading the data source through one interface and comparing against the tenant's thresholds:
+
+| # | Check (`task`) | Flags when |
+|---|---|---|
+| 1 | `host_health` | any host `healthSummary` is CONCERNING/BAD |
+| 2 | `heartbeat` | `now − last_heartbeat > heartbeat_window_sec` |
+| 3 | `cpu_percent` | any host CPU > `cpu_pct` |
+| 4 | `ram_percent` | used/total memory > `ram_pct` |
+| 5 | `disk_percent` | a watched mount > `disk_pct`, or a log dir > `log_size_mb` |
+| 6 | `hdfs_health` | HDFS unhealthy, or storage grew past the growth threshold |
+| 7 | `service_status` | any service/role not STARTED/GOOD |
+| 8 | `alerts` | active Cloudera Manager alert events |
+| 9 | `network` | zero throughput / frame errors / unreachable hosts |
+
+Each returns a `CheckResult` with `status` = **OK / BREACH / NO_DATA** (NO_DATA = the source can't provide that data yet, e.g. no services file uploaded).
+
+### Two data-source modes (per tenant, chosen by an admin)
+
+A `Tenant.data_source_mode` decides where a customer's data comes from — the whole demo-to-production switch:
+
+| Mode | Engine source | Reads from | Stage |
 |---|---|---|---|
-| `json` | `JsonDataSource` | hand-made `sample_*.json` in a folder | the built-in synthetic demo tenant + tests |
-| `export` | `ClouderaExportSource` | real CM API exports saved as files (`hosts/`, `metrics/`) | a customer's **demo stage** — their real data, offline |
-| `api` | `ClouderaApiSource` | the live Cloudera Manager REST API + SSH | a customer's **production stage** |
+| `json` | `ClouderaExportSource` | Cloudera Manager API exports uploaded as files (`hosts/`, `metrics/`, optional `services.json`/`events.json`) | Demo — the customer's real data, offline |
+| `api` | `ClouderaApiSource` | the live Cloudera Manager REST API (+ optional SSH) using the tenant's encrypted credentials | Production |
 
-`json`/`export` are file-based (offline); `api` is live. Optional `USE_JSON` in
-`.env` can force all tenants to files or to live for dev/testing.
+Both return the **same record types**, so the checks, AI, and dashboard are byte-for-byte identical between them. See [RUNBOOK.md](RUNBOOK.md) §6–§8 for the side-by-side.
 
-## Folder guide
+---
 
-| Folder | What's in it |
-|---|---|
-| `config/` | Tenant YAML profiles, schema/loader, LLM + per-tenant secrets |
-| `data/` | Sample data (`data/sample/`) + each export tenant's folder (`data/<id>/`) |
-| `data_sources/` | The three data sources + shared parsing + day filtering |
-| `cloudera/` | Talks to a real cluster: REST client, SSH commands, metric queries |
-| `checks/` | The nine checks + `run_all_checks()` → `HealthReport` |
-| `ai_analysis/` | The AI analyst (the only code that uses an LLM) |
-| `api/` | FastAPI backend — exposes checks + AI over HTTP |
-| `dashboard/` | Streamlit dashboard — a thin client that calls the API |
-| `secrets/` | Per-customer credential files (`<tenant_id>.env`, gitignored) |
-| `logs/` | Daily rotating logs, kept 7 days (gitignored) |
-| `tests/` | Pytest suite — runs fully offline (fake HTTP, fake SSH) |
+## The AI layer (agentic + governed)
 
-## Architecture: backend API + thin frontend
+When at least one check breaches and a user asks for analysis, `backend/app/ai/analyzer.py` runs an **agentic** analysis on the [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/):
 
-The backend logic (checks, AI, data sources) is exposed by a **FastAPI** service.
-The **Streamlit dashboard is a thin client** that calls that API over HTTP — it holds no monitoring logic. A frontend team can build their own UI against the same endpoints.
+- **Per-KPI agents** (`kpi_agents.py`) — one specialized analyst per check — and one **Incident Coordinator** for the all-breaches view. Each agent has task-specific instructions, shared governance rules, a set of **investigation tools** (`agent_tools.py`: knowledge search, evidence detail, dependency impact, disk-trend projection), and a **structured output schema**.
+- **Grounding is seeded into the input** (top knowledge match + dependency impact) so even weak/local models produce grounded answers; capable models use the tools to go further.
+- **Governance:** detection is deterministic; a **severity floor** (`ai/models.py`) computed from the check's own data means the model can raise severity but never under-rate it.
+- **Multi-provider fallback chain** (`agent_runner.py`): the analysis is attempted against each model in the user's priority chain until one succeeds, with per-attempt metering and fallback-on-error.
+- **Breach history:** every completed analysis is appended to `context/breach_history.csv` — a cross-user corpus of "what broke and what the AI said," for later review or as future LLM context. This is best-effort and can never fail an analysis.
+- **Background jobs:** analysis is slow (minutes on CPU), so it runs on a worker thread (`ai/jobs.py`) and the frontend polls; nothing blocks a request.
 
-```
-  Streamlit dashboard ──HTTP──> FastAPI (api/) ──> checks / AI / data source
-  (or any other frontend)
-```
+### Supported models (`llm/registry.py`)
 
-| Method + path | What it does |
-|---|---|
-| `GET /tenants` | list customers + their data source kind |
-| `GET /tenants/{id}/dates` | days available for the date filter |
-| `GET /tenants/{id}/report?as_of=YYYY-MM-DD` | run all checks, return the report |
-| `GET /tenants/{id}/thresholds` | the tenant's current breach limits |
-| `PUT /tenants/{id}/thresholds` | edit + persist the limits (validated, written to the YAML) |
-| `POST /tenants/{id}/analyze?as_of=...` | start a background AI analysis → `job_id` |
-| `GET /analysis/{job_id}` | poll the AI job until it's done |
+Because analysis is agentic, **every model must support tool/function calling.** Providers:
 
-Thresholds are editable from the dashboard sidebar; the change is validated by
-the API and saved back to the tenant's YAML (comments preserved), so the next
-monitoring run uses the new limits.
+- **Agentic path** (OpenAI-compatible transport): **Ollama** (local — data never leaves the network), **OpenAI**, **Google Gemini**, **xAI Grok**, **Groq**, **OpenRouter**.
+- **Direct-call path:** **Anthropic (Claude)** — runs a single-shot prompt (no live tool use for that one provider) because the Agents SDK needs an adapter package that can't be installed in this environment. Same governance, metering, and severity floor apply. See the docstring in `ai/agent_runner.py`.
 
-AI analysis is slow (minutes on CPU), so `analyze` returns immediately and the work runs in the background — the client polls `GET /analysis/{job_id}`.
+Which models a user may use, and their fallback order, come from their **plan** (default) overridden by **per-user access** (`llm/access.py`).
+
+---
+
+## Accounts, tenants, plans, and access control
+
+- **Auth** (`api/routes/auth.py`, `core/security.py`): JWT access + refresh tokens, bcrypt passwords, roles (`admin` / `user`). Registration always creates a normal user — admins are made by other admins or the seed script. Includes a full **account-deletion lifecycle** (self-service request → admin accept → 30-day recoverable window → recovery or dormant); see `db/models.py::AccountStatus`.
+- **Tenants** (clusters): admins onboard a cluster, upload its export files or enter live CM credentials, and **link users** to it. Users only see clusters they're linked to; admins see all.
+- **Plans** (`db/models.py::Plan`): the commercial knob — which models a customer may use, context budget, allowed Cloudera versions, and daily/monthly AI-call & token limits.
+- **Per-user overrides:** an admin can grant a user a specific model set, a personal fallback chain, custom limits, and **per-KPI visibility** (`allowed_kpis`) — which of the nine checks (and their thresholds and refresh settings) appear on that user's dashboard. Empty = unrestricted; admins always see all nine. Enforced in `engine/kpi_access.py`.
+- **Usage metering** (`llm/usage.py`, `ApiUsage` table): every model call is recorded (tokens, latency, success) and checked against the effective limits before a new analysis starts.
+
+---
 
 ## Running it
 
-Two processes, in two terminals (both with the venv active):
+### Prerequisites
+
+- **Python 3.12+** with the repo's virtualenv (`.venv`) and `pip install -r requirements.txt`.
+- **Node 18+** for the frontend (`cd frontend && npm install`).
+- **PostgreSQL** for production. For local dev you can skip it — with no `DATABASE_URL` set, the backend falls back to a SQLite file at `backend/ops.db`.
+- *(Optional)* **Ollama** running locally if you want the free local model (`ollama pull qwen2.5:7b`). Cloud providers need only an API key, pasted per-user in the UI.
+
+### 1. Prepare the database (once)
+
+Runs Alembic migrations, then creates the default admin, a demo plan, and the `bdaktprod` demo tenant. Idempotent.
 
 ```bash
-# terminal 1 — the API backend  (run from the project root, not from api/)
-uvicorn api.main:app --port 8000 --reload
-
-# terminal 2 — the dashboard
-streamlit run dashboard/app.py
+python -m backend.app.seed
 ```
 
-Open http://localhost:8501 for the dashboard, or http://127.0.0.1:8000/docs for
-the interactive API docs. The dashboard re-fetches the report automatically
-(interval configurable in the sidebar), offers a **date picker** to view any day of history, and one-click AI analysis when problems are found.
+Default admin: `admin@blutechconsulting.com` / `ChangeMe!123` (override via `ADMIN_EMAIL` / `ADMIN_PASSWORD` in `.env`; change the password immediately in a real deployment).
+
+### 2. Start the backend (terminal 1, venv active, from the repo root)
+
+```bash
+uvicorn backend.app.main:app --port 8000 --reload
+```
+
+Interactive API docs: http://127.0.0.1:8000/docs · health check: http://127.0.0.1:8000/health
+
+### 3. Start the frontend (terminal 2)
+
+```bash
+npm run dev --prefix frontend
+```
+
+Open http://localhost:5173. The Vite dev server proxies `/api/*` to the backend on port 8000 (override with `BACKEND_URL` before `npm run dev`), so the SPA makes same-origin calls with no CORS setup in dev.
+
+---
 
 ## Configuration
 
-- **`config/tenants/*.yaml`** — one file per customer: cluster name, thresholds,
-  the customer's **stage** (`data_source.type`), and (for live) the *names* of
-  the env vars holding credentials. Secret values never appear in YAML. For live
-  tenants, `lookback_days` and `metrics_cache_ttl_sec` (in the `cloudera:` block)
-  tune how much history to fetch and how long to cache it — per customer.
-  Thresholds can also be edited from the dashboard sidebar — the API validates
-  and writes the change straight back to this file (comments preserved).
-- **`secrets/<tenant_id>.env`** (gitignored) — that customer's credential values,
-  loaded automatically when their live source is built. One file per customer, so
-  rotating or revoking one never touches another.
-- **`.env`** (gitignored; copy `.env.example`) — global, non-customer settings:
-  `OLLAMA_BASE_URL` / `OLLAMA_MODEL` (where the AI model is served), optional
-  `USE_JSON` override, and `API_BASE_URL` (where the dashboard finds the API).
+Global settings live in **`.env`** at the repo root (gitignored; loaded by `core/config.py`). Everything has a sensible default — the app runs with an empty `.env`.
 
-Adding a customer = one YAML in `config/tenants/` (+ one file in `secrets/` for live). No code changes.
+| Setting | Default | Purpose |
+|---|---|---|
+| `DATABASE_URL` | SQLite `backend/ops.db` | Set to `postgresql+psycopg://user:pw@host:5432/db` for production |
+| `SECRET_KEY` | auto-generated | Signs JWTs — **generated into `.env` on first run** if empty |
+| `ENCRYPTION_KEY` | auto-generated | Fernet key encrypting stored API keys / CM passwords — generated on first run |
+| `LOG_LEVEL` | `INFO` | Logging verbosity (see below) |
+| `ACCESS_TOKEN_MINUTES` / `REFRESH_TOKEN_DAYS` | 30 / 7 | Token lifetimes |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | see above | First-run admin the seed creates |
+| `CORS_ORIGINS` | localhost:5173 | Allowed browser origins |
+| `APP_BASE_URL` | localhost:5173 | Used in invite links |
+| `SMTP_*` | empty | Optional — invite emails; invites still work without SMTP |
 
-## Customer onboarding flow
+> `SECRET_KEY` and `ENCRYPTION_KEY` auto-generate and **persist to `.env`** on first boot. Don't rotate them casually — a new `SECRET_KEY` invalidates all sessions, and a new `ENCRYPTION_KEY` makes stored secrets undecryptable.
 
-1. **Demo stage** — the customer provides real CM API exports as JSON. Drop them
-   in `data/<id>/` — `hosts/` + `metrics/`, plus optional `services.json` and
-   `events.json` (for the service-status and alerts checks) — create their YAML
-   with `data_source: {type: export, data_dir: data/<id>}`, and demo offline.
-   Any file that's missing simply makes its check report *no data* rather than a
-   false result.
-2. **Approval → live** — the customer provides a read-only Cloudera service
-   account. Fill the `cloudera:` block in their YAML, put credentials in
-   `secrets/<id>.env`, and flip `data_source.type` to `api`.
+**Per-user runtime settings** (LLM API keys, Ollama URL, model priority, KPI refresh intervals) are **not** in `.env` — users set them in the app's Settings page, and they're stored (secrets encrypted) in the database.
 
-That one-line stage flip is the whole switch — checks, AI, and dashboard are identical in both stages. The exports and the live API are shaped the same, so only `data_sources/parse_cm_export.py` would ever need touching if a real response differs — the checks, AI, and dashboard stay untouched.
+---
+
+## Logging
+
+End-to-end structured logging (`core/logging_config.py` + `core/log_context.py`):
+
+- **`logs/app.log`** — everything, one JSON object per line.
+- **`logs/errors.log`** — ERROR and above only (unhandled exceptions, model failures).
+- Both **rotate at midnight (UTC) and keep 7 days**; older files auto-delete.
+- Every line carries `request_id`, `user_id`, and `user_email`, propagated automatically through async code, the monitoring engine, and background AI threads — so one request (or one user's activity) is a single query away.
+
+```bash
+# PowerShell (no grep/jq needed):
+Get-Content logs\app.log | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.user_email -eq "someone@company.com" }
+# Git Bash / Linux:
+grep '"request_id": "abc123"' logs/app.log | jq .
+```
+
+---
 
 ## Tests
 
 ```bash
-python -m pytest tests/ -q
+python -m pytest backend/tests -q
 ```
 
-Everything runs offline (mocked HTTP + SSH). One test exercises the AI against a locally running Ollama model; it skips automatically when Ollama isn't up (and takes several minutes on CPU when it runs).
+Runs fully offline — the LLM is never actually called (the AI endpoints monkeypatch the analyzer, and agent behavior is asserted structurally). Covers auth, the account lifecycle, per-user KPI/model access, monitoring endpoints, the AI job flow, breach history, and logging.
 
-## The AI model
+---
 
-Detection never uses an LLM. The AI analyst runs on an open-source model served locally by [Ollama](https://ollama.com) (default: `qwen2.5:7b`) — no data leaves
-the machine, which suits air-gapped deployments. Any OpenAI-compatible endpoint can be substituted via `.env`.
+## Deployment notes
+
+- Point `DATABASE_URL` at PostgreSQL and run `python -m backend.app.seed` (or `alembic upgrade head`) on deploy.
+- Serve the built frontend (`npm run build --prefix frontend`) and the FastAPI app behind one reverse proxy that forwards `/api/*` to the backend, so the SPA's same-origin `/api` calls keep working.
+- Ship `logs/*.log` to your aggregator (Loki/ELK/CloudWatch) — they're already structured JSON, no reformatting needed.
+```

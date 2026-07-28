@@ -9,7 +9,7 @@ about how the date filter behaves.
 
 from datetime import date, datetime, time, timezone
 
-from .base import Host, MetricSeries
+from .base import Event, Host, MetricSeries
 
 
 def trim_to_day(series: list[MetricSeries], as_of: date | None) -> list[MetricSeries]:
@@ -24,6 +24,16 @@ def trim_to_day(series: list[MetricSeries], as_of: date | None) -> list[MetricSe
         if kept:
             trimmed.append(s.model_copy(update={"points": kept}))
     return trimmed
+
+
+def events_on_or_before(events: list[Event], as_of: date | None) -> list[Event]:
+    """Keep only alerts that had occurred by the end of the `as_of` day — the
+    same cutoff `trim_to_day` uses for metrics, so the alerts card matches the
+    selected day and never shows alerts from after it. `as_of=None` = no filter."""
+    if as_of is None:
+        return events
+    cutoff = datetime.combine(as_of, time.max, tzinfo=timezone.utc)
+    return [e for e in events if e.time_occurred <= cutoff]
 
 
 def days_present(series: list[MetricSeries]) -> list[date]:
