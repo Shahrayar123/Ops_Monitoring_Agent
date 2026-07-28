@@ -11,13 +11,17 @@ matched to the exact stack trace in the logs.
 """
 
 import logging
+import time
 import uuid
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from . import log_context
+
 log = logging.getLogger("backend")
+access_log = logging.getLogger("backend.access")
 
 # HTTP status -> stable machine-readable code the frontend can switch on.
 _STATUS_CODES = {
@@ -53,7 +57,27 @@ def install_error_handling(app: FastAPI) -> None:
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next):
         request.state.request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+        # Set BEFORE the route runs, so every log line for this request — ours,
+        # the engine's, SQLAlchemy's — carries it, not just the two lines below.
+        # get_current_user (api/deps.py) fills in user_id/email once auth runs,
+        # so the "completed" line below is user-attributed but "started" isn't.
+        log_context.set_request_id(request.state.request_id)
+
+        started = time.monotonic()
+        access_log.info("%s %s started", request.method, request.url.path)
         response = await call_next(request)
+        duration_ms = round((time.monotonic() - started) * 1000, 1)
+
+        # Starlette runs the route in a separate task (see api/deps.py's comment),
+        # so re-read the user identity from request.state — the shared object —
+        # rather than the contextvar, which this (middleware) task never saw
+        # get_current_user's update. Re-set it so THIS log line is attributed too.
+        log_context.set_user(getattr(request.state, "user_id", None), getattr(request.state, "user_email", None))
+        access_log.info(
+            "%s %s -> %s in %sms", request.method, request.url.path, response.status_code, duration_ms,
+            extra={"status_code": response.status_code, "duration_ms": duration_ms},
+        )
+
         response.headers["X-Request-ID"] = request.state.request_id
         return response
 

@@ -21,6 +21,8 @@ export default function Login() {
   const [offerRecovery, setOfferRecovery] = useState(false)
   const [recovering, setRecovering] = useState(false)
   const [recoverySubmitted, setRecoverySubmitted] = useState(false)
+  const [forgotBusy, setForgotBusy] = useState(false)
+  const [forgotMessage, setForgotMessage] = useState('')
 
   const expired = params.get('expired')
 
@@ -40,6 +42,23 @@ export default function Login() {
       setOfferRecovery(n.message.includes('This account has been deleted'))
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function onForgotPassword() {
+    if (!email) {
+      toast.error('Enter your email above first, then click "Forgot password?".')
+      return
+    }
+    setForgotBusy(true)
+    setForgotMessage('')
+    try {
+      const { message } = await authApi.forgotPassword(email)
+      setForgotMessage(message)   // generic (anti-enumeration) — the temp password, if any, arrives by email
+    } catch (err) {
+      toast.error(normalizeError(err).message)
+    } finally {
+      setForgotBusy(false)
     }
   }
 
@@ -90,6 +109,21 @@ export default function Login() {
           onChange={(e) => setPassword(e.target.value)}
           required
         />
+        <div className="flex justify-end -mt-2">
+          <button
+            type="button"
+            onClick={onForgotPassword}
+            disabled={forgotBusy}
+            className="text-xs font-semibold text-brand-600 hover:underline disabled:opacity-50"
+          >
+            {forgotBusy ? 'Sending…' : 'Forgot password?'}
+          </button>
+        </div>
+        {forgotMessage && (
+          <p className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:bg-emerald-500/10">
+            {forgotMessage}
+          </p>
+        )}
         {error && <p className="text-sm text-red-500">{error}</p>}
         {offerRecovery && !recoverySubmitted && (
           <Button type="button" variant="subtle" loading={recovering} onClick={onRequestRecovery} className="w-full">

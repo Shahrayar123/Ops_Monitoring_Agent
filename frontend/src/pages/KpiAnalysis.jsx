@@ -161,8 +161,26 @@ function GovernanceFooter({ analysis, seconds }) {
       </div>
       <p className="mt-2">
         🛡️ Governed: detection is deterministic (the AI never decides what's wrong); severity is floored by the check data so it can't be under-rated.
-        {analysis.attempts?.length > 1 && ' Model fallback was used.'}
       </p>
+      <FallbackNote attempts={analysis.attempts} used={analysis.model_used} />
+    </div>
+  )
+}
+
+// When the preferred model fails we silently drop to the next one. Showing only
+// "fallback was used" left you guessing why your chosen model wasn't used — so
+// name the model that failed and the reason the provider gave.
+function FallbackNote({ attempts, used }) {
+  const failed = (attempts || []).filter((a) => !a.ok)
+  if (failed.length === 0) return null
+  return (
+    <div className="mt-2 rounded-lg px-3 py-2" style={{ background: 'rgba(217,119,6,0.10)', color: '#b45309' }}>
+      <b>⚠ Fell back to {used}.</b> Your preferred model{failed.length > 1 ? 's' : ''} failed:
+      <ul className="mt-1 list-disc space-y-0.5 pl-5">
+        {failed.map((a, i) => (
+          <li key={i}><b>{a.model_id}</b> — {a.error || 'unknown error'}</li>
+        ))}
+      </ul>
     </div>
   )
 }

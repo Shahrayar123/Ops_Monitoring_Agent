@@ -8,6 +8,7 @@ Tokens: two JWTs —
     stolen refresh token can be cut off server-side.
 """
 
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
@@ -34,6 +35,14 @@ def verify_password(plain: str, hashed: str) -> bool:
         return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("ascii"))
     except ValueError:  # malformed stored hash — treat as no match, never crash login
         return False
+
+
+def generate_temp_password() -> str:
+    """A short, human-shareable one-time password for invites and password resets.
+    URL-safe so it survives being pasted into an email or chat unmangled. The
+    account is flagged must_change_password, so this only ever lives until the
+    user sets their own."""
+    return secrets.token_urlsafe(9)
 
 
 # ---------- tokens ----------

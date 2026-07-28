@@ -88,6 +88,12 @@ class User(Base):
     daily_token_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     monthly_token_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # --- per-user KPI (dashboard metric) access (admin-controlled) ---
+    # allowed_kpis: which of the nine checks THIS user may see on their dashboard.
+    # EMPTY = no restriction (all nine visible) — so existing users are unaffected.
+    # Non-empty = only those check tasks are shown/queryable. Admins always see all.
+    allowed_kpis: Mapped[list] = mapped_column(JSON, default=list)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     # --- account lifecycle (see AccountStatus) — a soft-delete with a 30-day

@@ -13,19 +13,36 @@ attempt, swapping in whichever model from the user's fallback chain is being
 tried, so the same agent definition runs on Ollama, GPT-4o, Gemini, or Grok.
 """
 
-from agents import Agent, ModelSettings
+from agents import Agent, AgentOutputSchema, ModelSettings
 
 from . import agent_tools
 from .models import IncidentAgentOutput, KpiAgentOutput
+
+# STRICT json-schema structured output (the SDK default). Measured, not assumed:
+# strict works on Ollama (qwen2.5) and on OpenRouter (Nemotron), and on Nemotron
+# it produces materially better results than non-strict — the `impact` field came
+# back populated under strict and empty under non-strict. Models that ignore the
+# schema entirely (e.g. gpt-oss-20b, which returns markdown prose) fail under BOTH
+# settings, so that's a model limitation, not a strictness one — such models don't
+# belong in the registry for this agentic product.
+_KPI_SCHEMA = AgentOutputSchema(KpiAgentOutput, strict_json_schema=True)
+_INCIDENT_SCHEMA = AgentOutputSchema(IncidentAgentOutput, strict_json_schema=True)
 
 _GOVERNANCE = """You never decide what counts as a problem and never invent metrics, hosts,
 or thresholds — a deterministic check already found this breach; you explain it,
 connect it to related issues, and recommend fixes.
 
-Use your tools to ground every claim: call search_knowledge before writing
-remediation, call get_dependency_impact before claiming cross-metric effects,
-and call get_disk_trend only for time estimates (never fabricate a timeline).
-Prefer knowledge that gives a "Resolution (agent action)" — lead with it.
+Your input already contains BASELINE KNOWLEDGE and DEPENDENCY IMPACT for this
+breach — treat that as your primary source and write your analysis from it
+directly. Prefer any entry that gives a "Resolution (agent action)" — lead with
+that concrete step. You also have tools (search_knowledge, get_evidence_detail,
+get_dependency_impact, get_disk_trend) if you need MORE than what you were given;
+they are optional. Only get_disk_trend may be used for time estimates — never
+fabricate a timeline.
+
+Produce the finished analysis, not a plan. Never emit text like "we need to get
+the evidence" or "I will call a tool" — if you want more detail, call the tool;
+otherwise answer from the context you already have.
 
 The only valid check names for related_tasks are: host_health, heartbeat,
 cpu_percent, ram_percent, disk_percent, hdfs_health, service_status, alerts,
@@ -65,11 +82,11 @@ synthesizing ALL currently-breaching checks into one incident report.
 
 {_GOVERNANCE}
 
-You will be given the list of breaching checks in the user message. Call
-get_check_detail for each one you need more evidence on, and search_knowledge
-for remediation guidance, before writing findings. Connect related problems —
-a single root cause often explains several breaches — rank each finding by
-severity, and note cross-metric impact using get_check_detail's dependency info."""
+You will be given every breaching check with BASELINE KNOWLEDGE per breach.
+Write your findings from that; call get_check_detail or search_knowledge only if
+you need more than you were given. Connect related problems — a single root cause
+often explains several breaches — rank each finding by severity, and note
+cross-metric impact. Produce the finished report, never a plan of what to do next."""
 
 # Human labels for the per-KPI agent's own instructions (kept separate from
 # frontend CHECK_META so this package has no frontend coupling).
@@ -97,13 +114,17 @@ def build_kpi_agent(task: str, model, result: dict, trend_text: str) -> Agent:
         instructions=instructions,
         model=model,
         tools=agent_tools.kpi_tools(task, result, trend_text),
-        output_type=KpiAgentOutput,
-        # Force at least one tool call before the model can finalize — grounding
-        # is a governance requirement, not optional, and smaller local models
-        # will happily skip straight to an ungrounded answer if given the choice.
-        # reset_tool_choice (default True) drops back to "auto" after the first
-        # forced call so the model can still choose to stop once it has enough.
-        model_settings=ModelSettings(temperature=0.2, max_tokens=900, tool_choice="required"),
+        output_type=_KPI_SCHEMA,
+        # tool_choice stays "auto" (the default) ON PURPOSE. We previously forced
+        # "required" to guarantee grounding, but that is not portable:
+        #   - Ollama ignores it entirely (traced: qwen2.5 answered on turn 1
+        #     without calling a single tool), so it bought us nothing locally, and
+        #   - OpenRouter hard-fails the request: "no online provider for model X
+        #     advertises inference-time tool_choice enforcement" (503).
+        # Grounding is instead guaranteed by seeding the baseline knowledge +
+        # dependency context directly into the input (see agent_runner.py), which
+        # works on every provider. Tools stay available for models that use them.
+        model_settings=ModelSettings(temperature=0.2, max_tokens=1200),
     )
 
 
@@ -114,6 +135,7 @@ def build_incident_agent(model, breached: list[dict], trend_text: str) -> Agent:
         instructions=_INCIDENT_INSTRUCTIONS,
         model=model,
         tools=agent_tools.incident_tools(breached, trend_text),
-        output_type=IncidentAgentOutput,
-        model_settings=ModelSettings(temperature=0.2, max_tokens=1600, tool_choice="required"),
+        output_type=_INCIDENT_SCHEMA,
+        # See build_kpi_agent for why tool_choice is left at "auto".
+        model_settings=ModelSettings(temperature=0.2, max_tokens=2000),
     )

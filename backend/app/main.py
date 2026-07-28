@@ -7,7 +7,6 @@ Run from the repo root:
 Interactive docs at http://127.0.0.1:8080/docs
 """
 
-import logging
 import sys
 from pathlib import Path
 
@@ -22,15 +21,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.core.config import get_settings
 from backend.app.core.errors import install_error_handling
+from backend.app.core.logging_config import configure_logging
 from backend.app.api.routes import admin, analysis, auth, kpi_settings, monitoring, plans_admin, tenant_admin, user_admin
 from backend.app.api.routes import settings as settings_routes
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
-)
-
 settings = get_settings()
+configure_logging(settings.log_level)
 
 app = FastAPI(
     title=settings.app_name,

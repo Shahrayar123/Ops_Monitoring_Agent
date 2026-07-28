@@ -4,10 +4,13 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Card, Input, Spinner } from '../ui'
 import { api } from '../../lib/api'
 import { plansApi, userAdminApi } from '../../lib/llmApi'
-import { monitoringApi } from '../../lib/monitoringApi'
+import { monitoringApi, CHECK_META } from '../../lib/monitoringApi'
 import { GroupedModelCheckboxes } from '../ModelPicker'
 import { useToast } from '../../lib/toast'
 import { normalizeError } from '../../lib/api'
+
+// The nine dashboard KPIs, for the per-user "KPI access" picker (task id -> label/icon).
+const ALL_KPIS = Object.entries(CHECK_META).map(([task, meta]) => ({ task, label: meta.label, icon: meta.icon }))
 
 // The Users tab: list users, invite new ones (with credentials shown on screen),
 // and control each user's model access + call/token limits.
@@ -23,6 +26,7 @@ export function UserManager() {
   const toast = useToast()
   const [inviting, setInviting] = useState(false)
   const [editing, setEditing] = useState(null) // user id
+  const [resetting, setResetting] = useState(null) // user object whose password is being reset
   const [busyId, setBusyId] = useState(null) // user id currently mid-action
   const users = useQuery({ queryKey: ['admin', 'users'], queryFn: async () => (await api.get('/admin/users')).data })
   const plans = useQuery({ queryKey: ['plans'], queryFn: plansApi.list })
@@ -127,6 +131,15 @@ export function UserManager() {
                           Access, clusters &amp; limits
                         </button>
                       )}
+                      {u.role !== 'admin' && (status === 'active' || status === 'deletion_requested') && (
+                        <button
+                          onClick={() => setResetting(u)}
+                          className="ml-3 text-xs font-semibold text-brand-600"
+                          title="Issue a new temporary password (e.g. the user is locked out, or the invite credentials were lost)"
+                        >
+                          Reset password
+                        </button>
+                      )}
                       {u.role === 'admin' ? (
                         <span className="ml-3 text-xs font-semibold" style={{ color: 'var(--faint)' }} title="Admin accounts cannot be deleted">Delete</span>
                       ) : status === 'active' ? (
@@ -156,7 +169,52 @@ export function UserManager() {
       {editing && (
         <AccessModal userId={editing} catalog={catalog.data} onClose={() => setEditing(null)} onSaved={() => users.refetch()} />
       )}
+      {resetting && (
+        <ResetPasswordModal user={resetting} onClose={() => setResetting(null)} onDone={() => users.refetch()} />
+      )}
     </>
+  )
+}
+
+// Admin-triggered password reset. Because the original password is hashed and
+// can never be shown again, this issues a NEW temporary one and reveals it here
+// (also emailed to the user when SMTP is configured). Two phases like InviteModal:
+// confirm -> result with the credentials.
+function ResetPasswordModal({ user, onClose, onDone }) {
+  const toast = useToast()
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState(null)
+
+  async function doReset() {
+    setBusy(true)
+    try {
+      const r = await userAdminApi.resetPassword(user.id)
+      setResult(r)
+      onDone()
+    } catch (err) {
+      toast.error(normalizeError(err).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal onClose={onClose} title={result ? 'Password reset' : 'Reset password'}>
+      {result ? (
+        <CredentialsResult result={result} kind="reset" onClose={onClose} />
+      ) : (
+        <div className="space-y-4">
+          <p className="text-sm" style={{ color: 'var(--muted)' }}>
+            Issue a new temporary password for <b style={{ color: 'var(--ink)' }}>{user.email}</b>?
+            Their current password stops working immediately, and they'll set a new one on next sign-in.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="subtle" onClick={onClose}>Cancel</Button>
+            <Button onClick={doReset} loading={busy}>Reset password</Button>
+          </div>
+        </div>
+      )}
+    </Modal>
   )
 }
 
@@ -184,14 +242,43 @@ function LimitFields({ form, set }) {
 // Groq, OpenRouter, local Ollama). See components/ModelPicker.jsx.
 const ModelChips = GroupedModelCheckboxes
 
+// Per-user KPI access. Empty selection = no restriction (all nine visible);
+// tick specific KPIs to limit the user's dashboard to only those.
+function KpiCheckboxes({ selected, onToggle }) {
+  const unrestricted = selected.length === 0
+  return (
+    <div>
+      <p className="mb-2 text-xs" style={{ color: 'var(--faint)' }}>
+        {unrestricted
+          ? 'No restriction — all 9 KPIs are visible. Tick specific ones to limit this user to only those.'
+          : `${selected.length} of 9 selected — only these KPIs will show on this user's dashboard.`}
+      </p>
+      <div className="flex flex-col gap-1.5 rounded-xl border p-3" style={{ borderColor: 'var(--line)', background: 'var(--surface-2)' }}>
+        {ALL_KPIS.map((k) => (
+          <label key={k.task} className="flex cursor-pointer items-center gap-2.5 text-sm" style={{ color: 'var(--ink)' }}>
+            <input
+              type="checkbox" checked={selected.includes(k.task)}
+              onChange={() => onToggle(k.task)}
+              className="h-4 w-4 shrink-0 accent-brand-600"
+            />
+            <span>{k.icon}</span>
+            <span className="font-medium">{k.label}</span>
+          </label>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function InviteModal({ plans, catalog, tenants, onClose, onDone }) {
   const toast = useToast()
-  const [form, setForm] = useState({ email: '', full_name: '', role: 'user', plan_id: plans[0]?.id || null, allowed_models: [], tenant_slugs: [], daily_call_limit: null, monthly_call_limit: null, daily_token_limit: null, monthly_token_limit: null })
+  const [form, setForm] = useState({ email: '', full_name: '', role: 'user', plan_id: plans[0]?.id || null, allowed_models: [], allowed_kpis: [], tenant_slugs: [], daily_call_limit: null, monthly_call_limit: null, daily_token_limit: null, monthly_token_limit: null })
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
   const toggle = (id) => set('allowed_models', form.allowed_models.includes(id) ? form.allowed_models.filter((x) => x !== id) : [...form.allowed_models, id])
   const toggleTenant = (slug) => set('tenant_slugs', form.tenant_slugs.includes(slug) ? form.tenant_slugs.filter((x) => x !== slug) : [...form.tenant_slugs, slug])
+  const toggleKpi = (task) => set('allowed_kpis', form.allowed_kpis.includes(task) ? form.allowed_kpis.filter((x) => x !== task) : [...form.allowed_kpis, task])
 
   async function invite() {
     setBusy(true)
@@ -209,16 +296,7 @@ function InviteModal({ plans, catalog, tenants, onClose, onDone }) {
   return (
     <Modal onClose={onClose} title={result ? 'User invited' : 'Invite a user'}>
       {result ? (
-        <div className="space-y-4">
-          <p className="text-sm" style={{ color: 'var(--muted)' }}>{result.message}</p>
-          <div className="rounded-xl border p-4 text-sm" style={{ borderColor: 'var(--line)', background: 'var(--surface-2)' }}>
-            <Row k="Email" v={result.email} />
-            <Row k="Temporary password" v={result.temp_password} mono />
-            <Row k="Sign-in link" v={result.invite_link} />
-          </div>
-          <p className="text-xs" style={{ color: 'var(--faint)' }}>⚠ This password is shown only once. Copy it now and share it securely. The user must change it on first sign-in.</p>
-          <div className="flex justify-end"><Button onClick={onClose}>Done</Button></div>
-        </div>
+        <CredentialsResult result={result} kind="invite" onClose={onClose} />
       ) : (
         <div className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
@@ -243,6 +321,14 @@ function InviteModal({ plans, catalog, tenants, onClose, onDone }) {
             <span className="mb-1.5 block text-sm font-medium" style={{ color: 'var(--ink)' }}>Allowed models <span className="font-normal" style={{ color: 'var(--faint)' }}>(blank = inherit from plan)</span></span>
             <ModelChips models={catalog.models} selected={form.allowed_models} onToggle={toggle} />
           </div>
+          {form.role !== 'admin' && (
+            <div>
+              <span className="mb-1.5 block text-sm font-medium" style={{ color: 'var(--ink)' }}>
+                KPI access <span className="font-normal" style={{ color: 'var(--faint)' }}>(which dashboard metrics this user sees — optional, can also be set later)</span>
+              </span>
+              <KpiCheckboxes selected={form.allowed_kpis} onToggle={toggleKpi} />
+            </div>
+          )}
           {form.role !== 'admin' && (
             <div>
               <span className="mb-1.5 block text-sm font-medium" style={{ color: 'var(--ink)' }}>
@@ -277,13 +363,20 @@ function AccessModal({ userId, catalog, onClose, onSaved }) {
 
   const d = detail.data
   if (d && form === null) {
+    // Drop any stored model id that's no longer in the catalog (e.g. a model
+    // retired from the registry). Otherwise it stays invisibly selected — there's
+    // no checkbox to clear it — and gets re-submitted on save.
+    const known = new Set((catalog.models || []).map((m) => m.id))
     setForm({
-      allowed_models: d.allowed_models, daily_call_limit: d.daily_call_limit, monthly_call_limit: d.monthly_call_limit,
+      allowed_models: (d.allowed_models || []).filter((id) => known.has(id)),
+      allowed_kpis: d.allowed_kpis || [],
+      daily_call_limit: d.daily_call_limit, monthly_call_limit: d.monthly_call_limit,
       daily_token_limit: d.daily_token_limit, monthly_token_limit: d.monthly_token_limit,
     })
   }
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
   const toggle = (id) => set('allowed_models', form.allowed_models.includes(id) ? form.allowed_models.filter((x) => x !== id) : [...form.allowed_models, id])
+  const toggleKpi = (task) => set('allowed_kpis', form.allowed_kpis.includes(task) ? form.allowed_kpis.filter((x) => x !== task) : [...form.allowed_kpis, task])
 
   async function save() {
     setBusy(true)
@@ -314,6 +407,20 @@ function AccessModal({ userId, catalog, onClose, onSaved }) {
           <div>
             <span className="mb-1.5 block text-sm font-medium" style={{ color: 'var(--ink)' }}>Usage limits</span>
             <LimitFields form={form} set={set} />
+          </div>
+          <div className="border-t pt-4" style={{ borderColor: 'var(--line)' }}>
+            <span className="mb-1.5 block text-sm font-medium" style={{ color: 'var(--ink)' }}>
+              KPI access <span className="font-normal" style={{ color: 'var(--faint)' }}>(which dashboard metrics this user can see)</span>
+            </span>
+            {d.role === 'admin' ? (
+              // Admins bypass allowed_kpis entirely (engine/kpi_access.py), so showing
+              // an editable restriction here would imply a limit that isn't enforced.
+              <p className="text-xs" style={{ color: 'var(--faint)' }}>
+                Admins always see all 9 KPIs — per-KPI restrictions don't apply to admin accounts.
+              </p>
+            ) : (
+              <KpiCheckboxes selected={form.allowed_kpis} onToggle={toggleKpi} />
+            )}
           </div>
           <div className="border-t pt-4" style={{ borderColor: 'var(--line)' }}>
             <span className="mb-1.5 block text-sm font-medium" style={{ color: 'var(--ink)' }}>
@@ -406,6 +513,61 @@ function TenantCheckboxList({ tenants, selected, onToggle, disabled }) {
           <span className="text-xs" style={{ color: 'var(--faint)' }}>({t.slug})</span>
         </label>
       ))}
+    </div>
+  )
+}
+
+// Shared result view for the invite + password-reset screens: shows the
+// credentials, a one-click "Copy credentials", and "Send / Resend email" which
+// mails exactly what's shown. `kind` picks the invite (welcome) vs reset email.
+function CredentialsResult({ result, kind, onClose }) {
+  const toast = useToast()
+  const [sending, setSending] = useState(false)
+  const [sent, setSent] = useState(!!result.emailed)   // was it auto-emailed on create/reset?
+
+  async function copyAll() {
+    const text = `Email: ${result.email}\nTemporary password: ${result.temp_password}\nSign-in link: ${result.invite_link}`
+    try {
+      await navigator.clipboard.writeText(text)
+      toast.success('Credentials copied to clipboard.')
+    } catch {
+      toast.error('Copy failed — select the text and copy it manually.')
+    }
+  }
+
+  async function sendEmail() {
+    setSending(true)
+    try {
+      const r = await userAdminApi.sendCredentials(result.user_id, result.temp_password, kind)
+      if (r.sent) { setSent(true); toast.success(r.message) }
+      else toast.error(r.message)   // e.g. SMTP not configured
+    } catch (err) {
+      toast.error(normalizeError(err).message)
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm" style={{ color: 'var(--muted)' }}>{result.message}</p>
+      <div className="rounded-xl border p-4 text-sm" style={{ borderColor: 'var(--line)', background: 'var(--surface-2)' }}>
+        <Row k="Email" v={result.email} />
+        <Row k="Temporary password" v={result.temp_password} mono />
+        <Row k="Sign-in link" v={result.invite_link} />
+      </div>
+      <p className="text-xs" style={{ color: 'var(--faint)' }}>
+        ⚠ This password is shown only once. Copy it or email it now — the user
+        {kind === 'reset' ? ' must set a new one on next sign-in.' : ' must change it on first sign-in.'}
+      </p>
+      <div className="flex items-center justify-between gap-2">
+        <Button variant="subtle" onClick={copyAll}>📋 Copy credentials</Button>
+        <div className="flex items-center gap-2">
+          {sent && <span className="text-xs font-semibold text-emerald-600">✓ Emailed</span>}
+          <Button variant="subtle" onClick={sendEmail} loading={sending}>{sent ? 'Resend email' : '✉ Send email'}</Button>
+          <Button onClick={onClose}>Done</Button>
+        </div>
+      </div>
     </div>
   )
 }

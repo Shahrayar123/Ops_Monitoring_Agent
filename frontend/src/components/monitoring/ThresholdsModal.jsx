@@ -29,10 +29,18 @@ export function ThresholdsModal({ slug, onClose, onSaved }) {
     })
   }, [slug])
 
+  // The backend returns only the thresholds behind KPIs this user can see, so
+  // render exactly those — a user restricted to Host Health gets no CPU limit.
+  const fields = NUM_FIELDS.filter((f) => values && f.key in values)
+  const showMounts = !!values && 'disk_mounts' in values
+
   async function save() {
     setBusy(true)
     try {
-      const payload = { ...values, disk_mounts: mounts.split('\n').map((m) => m.trim()).filter(Boolean) }
+      // Send back only the fields we were given; including a hidden one would be
+      // rejected (403) by the same access rule that filtered the GET.
+      const payload = { ...values }
+      if (showMounts) payload.disk_mounts = mounts.split('\n').map((m) => m.trim()).filter(Boolean)
       await monitoringApi.updateThresholds(slug, payload)
       toast.success('Thresholds saved — re-running checks.')
       onSaved?.()
@@ -61,33 +69,41 @@ export function ThresholdsModal({ slug, onClose, onSaved }) {
           <div className="skeleton h-64 rounded-xl" />
         ) : (
           <>
-            <div className="grid gap-4 sm:grid-cols-2">
-              {NUM_FIELDS.map((f) => (
-                <Input
-                  key={f.key}
-                  label={f.label}
-                  type="number"
-                  step="any"
-                  value={values[f.key] ?? ''}
-                  onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value === '' ? '' : Number(e.target.value) }))}
+            {fields.length === 0 && !showMounts ? (
+              <p className="text-sm" style={{ color: 'var(--muted)' }}>
+                None of the KPIs you have access to have tunable thresholds.
+              </p>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2">
+                {fields.map((f) => (
+                  <Input
+                    key={f.key}
+                    label={f.label}
+                    type="number"
+                    step="any"
+                    value={values[f.key] ?? ''}
+                    onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value === '' ? '' : Number(e.target.value) }))}
+                  />
+                ))}
+              </div>
+            )}
+            {showMounts && (
+              <label className="mt-4 block">
+                <span className="mb-1.5 block text-sm font-medium" style={{ color: 'var(--ink)' }}>
+                  Disk mounts to watch (one per line)
+                </span>
+                <textarea
+                  rows={6}
+                  value={mounts}
+                  onChange={(e) => setMounts(e.target.value)}
+                  className="w-full rounded-xl border px-3.5 py-2.5 text-sm font-mono outline-none focus:ring-2 focus:ring-brand-400/50"
+                  style={{ background: 'var(--surface-2)', borderColor: 'var(--line)', color: 'var(--ink)' }}
                 />
-              ))}
-            </div>
-            <label className="mt-4 block">
-              <span className="mb-1.5 block text-sm font-medium" style={{ color: 'var(--ink)' }}>
-                Disk mounts to watch (one per line)
-              </span>
-              <textarea
-                rows={6}
-                value={mounts}
-                onChange={(e) => setMounts(e.target.value)}
-                className="w-full rounded-xl border px-3.5 py-2.5 text-sm font-mono outline-none focus:ring-2 focus:ring-brand-400/50"
-                style={{ background: 'var(--surface-2)', borderColor: 'var(--line)', color: 'var(--ink)' }}
-              />
-            </label>
+              </label>
+            )}
             <div className="mt-5 flex justify-end gap-3">
               <Button variant="subtle" onClick={onClose}>Cancel</Button>
-              <Button onClick={save} loading={busy}>Save thresholds</Button>
+              <Button onClick={save} loading={busy} disabled={fields.length === 0 && !showMounts}>Save thresholds</Button>
             </div>
           </>
         )}

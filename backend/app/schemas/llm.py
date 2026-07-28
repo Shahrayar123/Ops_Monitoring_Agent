@@ -104,6 +104,8 @@ class UserAccessUpdate(BaseModel):
     monthly_call_limit: Optional[int] = Field(default=None, ge=0)
     daily_token_limit: Optional[int] = Field(default=None, ge=0)
     monthly_token_limit: Optional[int] = Field(default=None, ge=0)
+    # Which dashboard KPIs this user may see (by check task). EMPTY = all nine.
+    allowed_kpis: list[str] = []
 
 
 class CreateUserRequest(BaseModel):
@@ -119,6 +121,8 @@ class CreateUserRequest(BaseModel):
     # Clusters to grant this user access to immediately (by Tenant.slug).
     # Admins implicitly see every cluster regardless of this list.
     tenant_slugs: list[str] = []
+    # Dashboard KPIs this user may see (by check task). EMPTY = all nine.
+    allowed_kpis: list[str] = []
 
 
 class InviteResult(BaseModel):
@@ -127,6 +131,19 @@ class InviteResult(BaseModel):
     temp_password: str          # shown ONCE to the admin to share
     invite_link: str
     emailed: bool               # whether an email actually went out (SMTP configured)
+    message: str
+
+
+class SendCredentialsRequest(BaseModel):
+    # The exact temp password currently shown on the admin's result screen. Sent
+    # back so the email carries what the admin sees; the server verifies it's
+    # still the account's live credential before mailing it.
+    temp_password: str
+    kind: str = "invite"        # "invite" (welcome) | "reset" (password-reset notice)
+
+
+class SendCredentialsResult(BaseModel):
+    sent: bool
     message: str
 
 
@@ -146,6 +163,7 @@ class AdminUserDetail(BaseModel):
     monthly_call_limit: Optional[int]
     daily_token_limit: Optional[int]
     monthly_token_limit: Optional[int]
+    allowed_kpis: list[str]        # dashboard KPIs this user may see (empty = all nine)
     # resolved effective values (what actually applies)
     effective_allowed_models: list[str]
     effective_daily_calls: int

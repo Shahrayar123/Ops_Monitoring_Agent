@@ -23,17 +23,21 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ...core.email import send_password_reset, smtp_configured
 from ...core.security import (
     TokenError,
     create_token,
     decode_token,
+    generate_temp_password,
     hash_password,
     verify_password,
 )
+from ...core.config import get_settings
 from ...db.base import get_db
 from ...db.models import AccountStatus, Plan, RevokedToken, Role, User
 from ...schemas.auth import (
     ChangePasswordRequest,
+    ForgotPasswordRequest,
     LoginRequest,
     RecoverAccountRequest,
     RefreshRequest,
@@ -51,6 +55,7 @@ BAD_CREDENTIALS = "Incorrect email or password"
 DELETED_ACCOUNT = "This account has been deleted. You can request account recovery."
 DORMANT_ACCOUNT = "This account has been permanently deactivated and can no longer be recovered."
 RECOVERY_SUBMITTED = "If this account is eligible for recovery, a request has been submitted for admin review."
+FORGOT_SUBMITTED = "If an account exists for that email, a temporary password has been sent to it."
 
 
 @router.post("/register", response_model=UserOut, status_code=201)
@@ -152,6 +157,34 @@ def change_password(
     db.add(user)
     db.commit()
     log.info("Password changed for %s", user.email)
+
+
+@router.post("/forgot-password", status_code=200)
+def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)) -> dict:
+    """Public self-service reset: email the user a fresh temporary password, which
+    they then replace on next sign-in (must_change_password).
+
+    Anti-enumeration: always returns the same generic message whether or not the
+    email exists — same pattern as /auth/login and /auth/recover.
+
+    Safety: the password is rotated ONLY after the email is confirmed sent. If
+    SMTP isn't configured or the send fails, the account is left untouched — never
+    leave a user with their old password revoked AND no new one delivered. Without
+    email configured, self-service reset simply can't work; the admin 'Reset
+    password' action (which shows the temp password on screen) is the fallback."""
+    user = db.scalar(select(User).where(User.email == body.email.lower()))
+    if user is not None and user.is_active and smtp_configured():
+        temp_password = generate_temp_password()
+        login_link = f"{get_settings().app_base_url.rstrip('/')}/login"
+        if send_password_reset(user.email, user.full_name, temp_password, login_link):
+            user.password_hash = hash_password(temp_password)
+            user.must_change_password = True
+            db.add(user)
+            db.commit()
+            log.info("Forgot-password reset emailed to %s", user.email)
+        else:
+            log.warning("Forgot-password email to %s failed; password left unchanged", user.email)
+    return {"message": FORGOT_SUBMITTED}
 
 
 @router.post("/request-deletion", response_model=UserOut)

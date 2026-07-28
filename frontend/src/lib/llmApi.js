@@ -64,6 +64,14 @@ export const userAdminApi = {
   async remove(userId) {
     await api.delete(`/admin/users/${userId}`)
   },
+  async resetPassword(userId) {
+    // Returns { temp_password, emailed, message, ... } like the invite flow.
+    return (await api.post(`/admin/users/${userId}/reset-password`)).data
+  },
+  async sendCredentials(userId, temp_password, kind) {
+    // Emails the credentials shown on screen. Returns { sent, message }.
+    return (await api.post(`/admin/users/${userId}/send-credentials`, { temp_password, kind })).data
+  },
   async acceptDeletion(userId) {
     return (await api.post(`/admin/users/${userId}/deletion/accept`)).data
   },

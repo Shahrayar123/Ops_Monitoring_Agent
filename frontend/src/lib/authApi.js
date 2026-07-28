@@ -31,6 +31,12 @@ export const authApi = {
     const { data } = await api.post('/auth/recover', { email, password })
     return data
   },
+  async forgotPassword(email) {
+    // Always resolves with a generic message (anti-enumeration); the temp
+    // password, if any, is delivered by email only — never in this response.
+    const { data } = await api.post('/auth/forgot-password', { email })
+    return data
+  },
   async logout() {
     try {
       if (tokenStore.refresh) {

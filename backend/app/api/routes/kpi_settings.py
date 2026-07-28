@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from ...db.base import get_db
 from ...db.models import UserKpiRefreshRate
 from ...engine.bridge import DEFAULT_REFRESH_RATES
+from ...engine.kpi_access import can_see_kpi, visible_kpis
 from ...schemas.kpi import KpiRefreshRateOut, SetKpiRefreshRateRequest
 from ..deps import get_current_user
 
@@ -28,8 +29,11 @@ def _overrides_for(db: Session, user_id: int) -> dict[str, int]:
     return {r.task: r.interval_seconds for r in rows}
 
 
-def _rates_out(db: Session, user_id: int) -> list[KpiRefreshRateOut]:
-    overrides = _overrides_for(db, user_id)
+def _rates_out(db: Session, user) -> list[KpiRefreshRateOut]:
+    """Only the KPIs this user can actually see — no point letting someone tune
+    the refresh cadence of a card that never appears on their dashboard."""
+    overrides = _overrides_for(db, user.id)
+    allowed = visible_kpis(user)
     return [
         KpiRefreshRateOut(
             task=task, default_seconds=default,
@@ -37,18 +41,21 @@ def _rates_out(db: Session, user_id: int) -> list[KpiRefreshRateOut]:
             is_override=task in overrides,
         )
         for task, default in DEFAULT_REFRESH_RATES.items()
+        if task in allowed
     ]
 
 
 @router.get("", response_model=list[KpiRefreshRateOut])
 def get_kpi_refresh_rates(user=Depends(get_current_user), db: Session = Depends(get_db)):
-    return _rates_out(db, user.id)
+    return _rates_out(db, user)
 
 
 @router.put("", response_model=list[KpiRefreshRateOut])
 def set_kpi_refresh_rate(body: SetKpiRefreshRateRequest, user=Depends(get_current_user), db: Session = Depends(get_db)):
     if body.task not in DEFAULT_REFRESH_RATES:
         raise HTTPException(status_code=404, detail=f"Unknown KPI check '{body.task}'")
+    if not can_see_kpi(user, body.task):
+        raise HTTPException(status_code=403, detail="You don't have access to this KPI.")
 
     row = db.scalar(
         select(UserKpiRefreshRate).where(UserKpiRefreshRate.user_id == user.id, UserKpiRefreshRate.task == body.task)
@@ -59,17 +66,19 @@ def set_kpi_refresh_rate(body: SetKpiRefreshRateRequest, user=Depends(get_curren
         row.interval_seconds = body.seconds
         db.add(row)
     db.commit()
-    return _rates_out(db, user.id)
+    return _rates_out(db, user)
 
 
 @router.delete("/{task}", response_model=list[KpiRefreshRateOut])
 def reset_kpi_refresh_rate(task: str, user=Depends(get_current_user), db: Session = Depends(get_db)):
     if task not in DEFAULT_REFRESH_RATES:
         raise HTTPException(status_code=404, detail=f"Unknown KPI check '{task}'")
+    if not can_see_kpi(user, task):
+        raise HTTPException(status_code=403, detail="You don't have access to this KPI.")
     db.execute(
         UserKpiRefreshRate.__table__.delete().where(
             UserKpiRefreshRate.user_id == user.id, UserKpiRefreshRate.task == task
         )
     )
     db.commit()
-    return _rates_out(db, user.id)
+    return _rates_out(db, user)

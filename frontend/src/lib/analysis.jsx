@@ -53,13 +53,20 @@ export function AnalysisProvider({ children }) {
   const entriesRef = useRef({})
   const timers = useRef({})
 
+  // entriesRef is the synchronous source of truth, updated BEFORE setEntries.
+  //
+  // It has to be: start() does `setEntry(key, { jobId })` and then immediately
+  // `poll(key)`, and poll() reads the ref. React does not run a `setEntries(fn)`
+  // updater at call time — it defers it to the next render — so assigning the ref
+  // inside the updater (as this used to) left poll() reading a stale entry with
+  // jobId still null. poll()'s `!e.jobId` guard then bailed out and the polling
+  // loop never started: the job finished on the server but the UI spun forever,
+  // until a refresh re-hydrated from localStorage and resumed it.
   const setEntry = useCallback((key, patch) => {
-    setEntries((prev) => {
-      const next = { ...prev, [key]: { ...prev[key], ...patch } }
-      entriesRef.current = next
-      save(uid, next)
-      return next
-    })
+    const next = { ...entriesRef.current, [key]: { ...entriesRef.current[key], ...patch } }
+    entriesRef.current = next
+    save(uid, next)
+    setEntries(next)
   }, [uid])
 
   const clearTimer = (key) => {
@@ -123,13 +130,13 @@ export function AnalysisProvider({ children }) {
   const reset = useCallback((slug, task, asOf) => {
     const key = entryKey(slug, task, asOf)
     clearTimer(key)
-    setEntries((prev) => {
-      const next = { ...prev }
-      delete next[key]
-      entriesRef.current = next
-      save(uid, next)
-      return next
-    })
+    // Same synchronous-ref discipline as setEntry — and it keeps the localStorage
+    // write out of a state updater, which React may invoke more than once.
+    const next = { ...entriesRef.current }
+    delete next[key]
+    entriesRef.current = next
+    save(uid, next)
+    setEntries(next)
   }, [uid])
 
   // Hydrate on login / user change, resume running jobs, and sync across tabs.

@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 
 from ..db.models import Tenant, User
 from ..engine import bridge
-from . import agent_runner, models, trends
+from ..engine.kpi_access import can_see_kpi
+from . import agent_runner, breach_history, models, trends
 from .models import AiFinding, IncidentReport, KpiAnalysis
 
 log = logging.getLogger("backend.ai.analyzer")
@@ -60,7 +61,7 @@ def analyze_kpi(db: Session, user: User, db_tenant: Tenant, task: str, as_of=Non
     data = outcome.data
     severity = models.apply_floor(str(data.get("severity", "MEDIUM")).upper(), task, result.detail)
 
-    return KpiAnalysis(
+    analysis = KpiAnalysis(
         task=task,
         severity=severity,
         summary=str(data.get("summary", "")).strip() or _fallback_summary(data.get("_raw_text", "")),
@@ -72,11 +73,19 @@ def analyze_kpi(db: Session, user: User, db_tenant: Tenant, task: str, as_of=Non
         model_used=outcome.model_id,
         attempts=outcome.attempts,
     )
+    # Cross-user corpus of "what broke and what the AI said" — never raises.
+    breach_history.record_kpi(
+        analysis, cluster=db_tenant.cluster_name,
+        version=db_tenant.cloudera_version, breach_detail=result.detail,
+    )
+    return analysis
 
 
 def analyze_incident(db: Session, user: User, db_tenant: Tenant, as_of=None) -> IncidentReport:
     report = bridge.build_report(db_tenant, as_of)
-    breached = [r for r in report.results if r.status == "BREACH"]
+    # Only reason over breaches this user is allowed to see, so a restricted
+    # user's incident view matches the KPIs on their dashboard.
+    breached = [r for r in report.results if r.status == "BREACH" and can_see_kpi(user, r.task)]
     if not breached:
         raise NoBreachError("No checks are breaching — the AI only runs when there are problems.")
 
@@ -116,13 +125,20 @@ def analyze_incident(db: Session, user: User, db_tenant: Tenant, as_of=None) -> 
             ))
 
     findings = models.order_findings(findings)
-    return IncidentReport(
+    report_out = IncidentReport(
         overall_summary=str(data.get("overall_summary", "")).strip() or _fallback_summary(data.get("_raw_text", "")),
         findings=findings,
         priority_order=[f.primary_task for f in findings],   # from the ordered cards
         model_used=outcome.model_id,
         attempts=outcome.attempts,
     )
+    # One history row per finding, each carrying the engine's measured detail
+    # alongside the model's explanation of it. Never raises.
+    breach_history.record_incident(
+        report_out, cluster=db_tenant.cluster_name, version=db_tenant.cloudera_version,
+        details={t: r.detail for t, r in by_task.items()},
+    )
+    return report_out
 
 
 def _fallback_summary(text: str) -> str:

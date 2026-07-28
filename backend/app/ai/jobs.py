@@ -6,6 +6,7 @@ until it's done. State is in-memory (fine for a single process); Phase 6 persist
 analyses to the database for the audit trail.
 """
 
+import logging
 import threading
 import time
 import uuid
@@ -13,12 +14,15 @@ from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Optional
 
+from ..core import log_context
 from ..db.base import SessionLocal
 from ..db.models import Tenant, User
 from ..llm.providers import LLMError
 from ..llm.usage import LimitExceeded
 from . import analyzer
 from .analyzer import NoBreachError
+
+log = logging.getLogger("backend.ai.jobs")
 
 _JOBS: dict[str, "Job"] = {}
 _LOCK = threading.Lock()
@@ -50,12 +54,19 @@ def _finish(job: Job, *, status: str, result=None, error=None):
     job.seconds = round(time.time() - job.started_at, 1)
 
 
-def _run(job: Job, tenant_id: int, task: Optional[str], as_of: Optional[date]):
+def _run(job: Job, tenant_id: int, task: Optional[str], as_of: Optional[date], log_ctx: dict):
+    # A plain threading.Thread does NOT inherit the parent's contextvars, so
+    # without this every log line from this job would show request_id="-" and
+    # be unattributable to a user. Re-applying the snapshot taken in start()
+    # (still inside the original request, where the context was live) fixes that.
+    log_context.apply_context(log_ctx)
+    log.info("AI %s analysis job %s started (task=%s)", job.kind, job.id, task or "all")
     db = SessionLocal()
     try:
         user = db.get(User, job.user_id)
         tenant = db.get(Tenant, tenant_id)
         if user is None or tenant is None:
+            log.warning("AI analysis job %s: user or cluster no longer exists", job.id)
             return _finish(job, status="error", error="User or cluster no longer exists.")
         try:
             if job.kind == "kpi":
@@ -63,13 +74,17 @@ def _run(job: Job, tenant_id: int, task: Optional[str], as_of: Optional[date]):
             else:
                 out = analyzer.analyze_incident(db, user, tenant, as_of)
             _finish(job, status="done", result=out.model_dump())
+            log.info("AI analysis job %s finished in %ss (model=%s)", job.id, job.seconds, out.model_used)
         except NoBreachError as exc:
             _finish(job, status="no_breach", error=str(exc))
         except LimitExceeded as exc:
+            log.warning("AI analysis job %s blocked by usage limit: %s", job.id, exc)
             _finish(job, status="error", error=str(exc))
         except LLMError as exc:
+            log.error("AI analysis job %s: all models failed: %s", job.id, exc)
             _finish(job, status="error", error=str(exc))
         except Exception as exc:  # never leave a job hanging on an unexpected fault
+            log.exception("AI analysis job %s failed unexpectedly", job.id)
             _finish(job, status="error", error=f"Analysis failed: {exc}")
     finally:
         db.close()
@@ -92,7 +107,8 @@ def start(kind: str, user: User, tenant: Tenant, task: Optional[str], as_of: Opt
     job = Job(id=uuid.uuid4().hex, kind=kind, scope=task or "all", user_id=user.id)
     _register(job)
     tenant_id = tenant.id
-    threading.Thread(target=_run, args=(job, tenant_id, task, as_of), daemon=True).start()
+    log_ctx = log_context.current_context()  # snapshot: taken here, while still on the request thread
+    threading.Thread(target=_run, args=(job, tenant_id, task, as_of, log_ctx), daemon=True).start()
     return job.id
 
 

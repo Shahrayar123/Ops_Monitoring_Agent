@@ -22,3 +22,8 @@ data/Alerts & Health Checks/
 # Product backend: local dev database + uploaded tenant files.
 backend/ops.db
 backend/uploads/
+
+# Accumulated breach + AI-analysis history (ai/breach_history.py). Contains real
+# cluster detail like data/bdaktprod/, and being append-only it would conflict on
+# every merge. Keep it local; copy it deliberately if you want to share it.
+context/

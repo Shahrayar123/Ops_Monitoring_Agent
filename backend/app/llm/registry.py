@@ -88,18 +88,26 @@ MODELS: list[ModelSpec] = [
     ModelSpec("groq-llama-3.3-70b", "Llama 3.3 70B (Groq)", "groq", "llama-3.3-70b-versatile", 131072,
               notes="Fast hosted Llama 3.3 on Groq — supports tool calling."),
 
-    # --- OpenRouter (many models via one key) — one safe default. To use a FREE
-    #     model, switch `model` to a `:free` variant (e.g.
-    #     "meta-llama/llama-3.3-70b-instruct:free"), but FIRST confirm that model
-    #     lists "Tools" support on openrouter.ai — many free models do not, and
-    #     an agentic run needs tool calling. IDs rotate; verify before shipping. ---
+    # --- OpenRouter (many models via one key). Every entry below was verified
+    #     against https://openrouter.ai/api/v1/models as supporting BOTH
+    #     "tools" AND "structured_outputs" — this agentic product needs both
+    #     (tool calling to investigate, structured output for the result schema).
+    #     Re-check that endpoint before adding any model; slugs rotate. ---
+    # FREE (no credit cost) — ideal for latency/quality comparison against local Ollama.
+    # NOTE: openai/gpt-oss-20b:free was tried and REMOVED. OpenRouter's metadata
+    # advertises structured_outputs, but the free-tier providers it routes to
+    # ignore the response schema and return markdown prose, so every agentic run
+    # dies with "Invalid JSON when parsing ...". Verified under both strict and
+    # non-strict schema. Don't re-add it without re-testing an end-to-end run.
+    ModelSpec("openrouter-nemotron-super", "Nemotron 3 Super 120B (OpenRouter, free)", "openrouter", "nvidia/nemotron-3-super-120b-a12b:free", 262144,
+              notes="FREE via OpenRouter. Verified end-to-end: tool calling + structured output work with this agent."),
+    # Paid but inexpensive, and consistently strong for this workload.
     ModelSpec("openrouter-llama-3.3-70b", "Llama 3.3 70B (OpenRouter)", "openrouter", "meta-llama/llama-3.3-70b-instruct", 131072,
-              notes="Llama 3.3 70B via OpenRouter — supports tool calling. Swap to a :free variant to run at no cost (verify tool support first)."),
-    # Arcee Agent hosted via OpenRouter (vs the local Ollama arcee-agent above).
-    # NOTE: verify the exact slug on openrouter.ai — Arcee's tool-calling model is
-    # sometimes listed as "arcee-ai/caller-large"; adjust `model` if this 404s.
-    ModelSpec("openrouter-arcee-agent", "Arcee Agent (OpenRouter)", "openrouter", "arcee-ai/arcee-agent", 32768,
-              notes="Arcee's agentic tool-calling model, hosted via OpenRouter."),
+              notes="Llama 3.3 70B via OpenRouter — tool calling + structured output."),
+    ModelSpec("openrouter-arcee-trinity", "Arcee Trinity Large Thinking (OpenRouter)", "openrouter", "arcee-ai/trinity-large-thinking", 262144,
+              notes="Arcee's reasoning model via OpenRouter — tool calling + structured output."),
+    ModelSpec("openrouter-deepseek-v3.1", "DeepSeek V3.1 (OpenRouter)", "openrouter", "deepseek/deepseek-chat-v3.1", 163840,
+              notes="Strong, low-cost DeepSeek via OpenRouter — tool calling + structured output."),
 
     # --- Ollama (local; data never leaves the network). Only tool-capable local
     #     models belong here — qwen2.5, llama3.1, and arcee-agent all call tools. ---

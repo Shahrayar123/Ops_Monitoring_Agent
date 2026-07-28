@@ -1,268 +1,276 @@
 # RUNBOOK — end-to-end execution walkthrough
 
-This document traces **exactly what runs, in what order**, from a browser refresh all the way down to reading cluster data — for both data paths:
+This document traces **exactly what runs, in what order** — from process startup, through a browser request, all the way down to reading cluster data and running the AI. It names the file and function at each step so you can follow any path in the code.
 
-- **Extracted JSON path** (`data_source.type: export`) — reads real Cloudera
-  Manager API exports saved as files. This is what the demo uses.
-- **Live API path** (`data_source.type: api`) — calls a real Cloudera cluster.
+Read [README.md](README.md) first for the big picture; this is the "what executes first, and next, and next" companion.
 
-The two paths differ **only** in the data-source object at the bottom. Every layer above it — the API endpoints, the checks, the AI, the dashboard — is identical. That's the whole design.
+Contents:
+- §0 The two processes
+- §1 Backend startup — what imports and runs first
+- §2 Database preparation (migrations + seed)
+- §3 Frontend startup — provider tree and routing
+- §4 The request lifecycle every API call goes through
+- §5 First load: login → tokens → tenant list
+- §6 The monitoring loop (per-card polling → engine → checks)
+- §7 The two data-source paths (uploaded files vs live API)
+- §8 On-demand AI analysis (the agentic path)
+- §9 Editing thresholds (a write path)
+- §10 Access control (who sees which KPIs / models)
+- §11 Logging, end to end
+- §12 Operations quick reference + common issues
 
 ---
 
 ## 0. The two processes
 
-| Process | Command | Role |
+| Process | Command (from repo root) | Role |
 |---|---|---|
-| **Backend** | `uvicorn api.main:app --port 8000` | FastAPI — runs checks + AI, exposes HTTP |
-| **Frontend** | `streamlit run dashboard/app.py` | Dashboard — calls the backend over HTTP |
-
-The frontend holds **no logic**; it only draws what the backend returns. A
-different UI could replace it by calling the same endpoints.
+| **Backend** | `uvicorn backend.app.main:app --port 8000` | FastAPI — auth, monitoring, AI, admin; talks to Postgres and the engine |
+| **Frontend** | `npm run dev --prefix frontend` | React SPA (Vite dev server on :5173), proxies `/api/*` → backend |
 
 ```
-Browser ──HTTP──> Streamlit (dashboard/app.py) ──HTTP──> FastAPI (api/) ──> checks / AI / data source
+Browser ──/api/*──> Vite dev-proxy (or prod reverse-proxy) ──> FastAPI (backend/app) ──> engine ──> cluster data
 ```
 
----
-
-## 1. Startup — what runs first
-
-### Backend (`uvicorn api.main:app`)
-1. Python imports `api/main.py`.
-2. `api/main.py` adds the project root to `sys.path` (so `config`, `checks`, … import no matter where uvicorn is launched).
-3. `setup_logging()` (`app_logging.py`) — opens the daily log file `logs/ops_agent.log` (rotates at midnight, keeps 7 days).
-4. `app = FastAPI(...)` is created and the route functions are registered.
-5. uvicorn starts listening on `:8000`. **No cluster or file is touched yet** — data is only read when a request arrives.
-
-### Frontend (`streamlit run dashboard/app.py`)
-1. `dashboard/app.py` adds the project root to `sys.path` and reads `.env` (`load_dotenv`).
-2. `API_BASE` is resolved (`API_BASE_URL` in `.env`, default `http://127.0.0.1:8000`).
-3. Streamlit runs `main()` top-to-bottom on every page load / interaction.
+Before either runs the first time, the **database must be prepared** (§2).
 
 ---
 
-## 2. First page load — the tenant list
+## 1. Backend startup — what runs first
 
-When the browser opens the dashboard, `main()` in `dashboard/app.py` runs:
+Running `uvicorn backend.app.main:app` imports **`backend/app/main.py`**, which executes top-to-bottom:
 
-1. `api_list_tenants()` → `GET /tenants`.
-2. Backend `list_tenants()` (`api/main.py`) → `service.list_tenants()` → `load_tenant_configs_from_dir("config/tenants")` (`config/loader.py`) — reads and validates every `*.yaml`.
-3. For each tenant, `service.tenant_summary()` → `source_kind_for(tenant)` (`data_sources/select.py`) decides `json` / `export` / `api` (honoring the optional `USE_JSON` override in `.env`).
-4. Returns `[{tenant_id, display_name, cluster_name, source_kind}, ...]`.
-5. The dashboard draws the sidebar: tenant dropdown, live toggle, refresh interval, — if the tenant has history — a **date picker**, and an editable **⚙️ Thresholds** panel (§4b).
+1. **`sys.path` setup** — `main.py` prepends the repo root to `sys.path`, so the engine packages (`checks/`, `config/`, `data_sources/`, `cloudera/`) and `backend.app` resolve no matter where uvicorn was launched.
+2. **Imports** pull in `get_settings`, `install_error_handling`, `configure_logging`, and every router module. (Importing a router module imports its dependencies — `db.models`, `llm.registry`, `ai.*` — so the model registry and agent definitions are constructed at import time.)
+3. **`settings = get_settings()`** (`core/config.py`) — reads `.env`. **On first run**, if `SECRET_KEY` or `ENCRYPTION_KEY` is empty, it generates one and **appends it to `.env`** (so restarts don't invalidate sessions or stored secrets).
+4. **`configure_logging(settings.log_level)`** (`core/logging_config.py`) — clears root handlers and installs three: a human-readable console handler, a JSON `logs/app.log` (INFO+), and a JSON `logs/errors.log` (ERROR+). Both files rotate at midnight UTC, keep 7 days. Also de-isolates uvicorn's loggers so HTTP access lines land in the files. **This is the first thing that touches the filesystem.**
+5. **`app = FastAPI(...)`** is created.
+6. **`install_error_handling(app)`** (`core/errors.py`) — registers the `request_id_middleware` (HTTP middleware) and the exception handlers that wrap every response in the `{ error: { code, message, request_id } }` envelope.
+7. **CORS middleware** is added.
+8. **`app.include_router(...)`** mounts every router: `auth`, `admin`, `monitoring`, `tenant_admin`, `settings`, `kpi_settings`, `plans_admin`, `user_admin`, `analysis`.
+9. **`/health`** is defined.
+10. uvicorn begins serving. **No database query, cluster call, or file read of tenant data happens at startup** — that only occurs when a request arrives. (The DB engine/session in `db/base.py` is created at import, but connects lazily.)
 
----
-
-## 3. The core loop — a monitoring report (runs every N seconds)
-
-This is the heart. The dashboard's `st.fragment(run_every="10s")` calls
-`render_live_monitor()` on a timer, which calls the backend report endpoint.
-
-### 3a. Frontend → backend
-1. `render_live_monitor()` (`dashboard/app.py`) → `api_get_report(tenant_id, as_of)` → `GET /tenants/{id}/report?as_of=YYYY-MM-DD`.
-
-### 3b. Backend orchestration (identical for both data paths)
-2. `tenant_report()` (`api/main.py`) → `service.build_report(tenant_id, as_of)`.
-3. `build_report()` (`api/service.py`):
-   - `get_tenant(tenant_id)` — load the tenant's config.
-   - `get_source(tenant_id)` — get (or build + cache) the data source. **This is where the two paths diverge — see §5 and §6.**
-   - Acquire the tenant's lock (so a concurrent request for a different day can't corrupt this one).
-   - `_apply_day(source, as_of)` — if the source is day-aware, set `source.as_of = as_of` and compute `now = source.reference_now()` (the heartbeat reference).
-   - `run_all_checks(source, tenant, now)`.
-4. `run_all_checks()` (`checks/run_all_checks.py`) runs the **9 checks in order**, each reading the source and comparing against the tenant's thresholds:
-
-   | # | Function | Reads (via the source) | Flags when |
-   |---|---|---|---|
-   | 1 | `check_host_health` | `get_hosts()` | any host `healthSummary != GOOD` |
-   | 2 | `check_heartbeat` | `get_hosts()` | `now − last_heartbeat > heartbeat_window_sec` |
-   | 3 | `check_cpu_percent` | `get_metrics(["cpu_percent"])` | any host CPU > `cpu_pct` |
-   | 4 | `check_ram_percent` | `get_metrics(["physical_memory_used","physical_memory_total"])` | used/total > `ram_pct` |
-   | 5 | `check_disk_percent` | `get_metrics(["fs_bytes_used_percent"])` + `get_disk_usage()` + `get_log_files()` | mount > `disk_pct` or log > `log_size_mb` |
-   | 6 | `check_hdfs_health` | `get_services()` + `get_metrics(["dfs_capacity_used"])` | HDFS unhealthy or storage grew > threshold |
-   | 7 | `check_service_status` | `get_services()` + `get_roles()` | any service/role not STARTED/GOOD |
-   | 8 | `check_alerts` | `get_events()` | any active alert event |
-   | 9 | `check_network` | `get_metrics([...throughput...])` + `ping_hosts()` | zero throughput / frame errors / unreachable |
-
-   Each returns a `CheckResult` with `status` = **OK** / **BREACH** / **NO_DATA**
-   (NO_DATA = the source can't provide that data yet, e.g. no services export).
-5. `run_all_checks()` bundles them into a `HealthReport` (with `breach_count`, `ok_count`, `no_data_count`) and logs a one-line summary (full detail only when the situation changes).
-6. The endpoint returns `report.model_dump()` as JSON.
-
-### 3c. Backend → frontend
-7. `render_live_monitor()` parses the JSON back into a `HealthReport` and renders (via `dashboard/styles.py`): the live indicator, the health banner, the KPI cards, and the 9 check cards. **No AI is involved in this loop** — it's pure deterministic Python, fast and cheap.
-
-### 3d. Refresh interval vs. caching — how "fresh" the data really is
-
-The sidebar **Refresh interval** (5 / 10 / 30 / 60s) sets `run_every` on the
-Streamlit fragment. So *every interval*, the dashboard calls the backend and the **9 checks re-run**. What that pulls underneath depends on the source:
-
-**Export / JSON tenants (files):** fully fresh every interval. The checks re-read
-the source; a file is re-parsed only if its mtime changed (unchanged files skip
-re-parsing but the data returned is still current). Edit a JSON file → the
-dashboard reflects it within one interval.
-
-**Live API tenants:** two different freshness rules on purpose —
-
-| What | Refreshes every interval? | Why |
-|---|---|---|
-| Dashboard → backend call + check run | ✅ yes | the refresh timer |
-| Host health + heartbeat (`get_hosts`) | ✅ yes — hits Cloudera every interval | real-time signals, never cached |
-| Metrics: CPU / RAM / disk / HDFS / network | ❌ served from cache for `metrics_cache_ttl_sec` (default 300s) | metrics are pulled at HOURLY rollup — they only change once an hour, so re-querying every few seconds would load CM for no benefit |
-
-So on a live cluster with a 5s interval: the page and host health update every
-5s, but the metric *values* re-pull from Cloudera every 5 minutes (by design).
-To change that for a specific customer, set `metrics_cache_ttl_sec` in their
-`cloudera:` block (e.g. `60` = re-pull metrics each minute; `0` = no cache,
-every interval hits the cluster — not recommended for the large disk query).
+> The database schema is **not** created at startup. There is no `create_all()` or migration-on-boot — you must run the seed/migrations first (§2).
 
 ---
 
-## 4. On-demand AI analysis (only when there are breaches)
+## 2. Database preparation (run once, before first boot)
 
-Triggered by the **Run AI Analysis** button. The AI is slow (minutes on CPU), so it runs as a background job the client polls.
-
-### 4a. Start the job
-1. `_run_and_poll_analysis()` (`dashboard/app.py`) → `api_start_analysis()` → `POST /tenants/{id}/analyze?as_of=...`.
-2. `start_analysis()` (`api/main.py`) → `jobs.start_analysis(tenant_id, as_of)` (`api/jobs.py`):
-   - `_new_job()` creates a job record `{status: "running", ...}` and returns a `job_id` **immediately**.
-   - `asyncio.create_task(_run(...))` launches the analysis in the background.
-3. The endpoint returns `{job_id, status: "running"}` right away.
-
-### 4b. The background job (`_run` in `api/jobs.py`)
-4. `build_fresh_source(tenant_id)` — its **own** data source (not the shared cached one), so the auto-refresh loop can't change the day under it mid-run.
-5. `build_report_on(source, tenant, as_of)` — re-run the 9 checks for the pinned day. Records a `breach_signature` (which breaches it's about).
-6. If no breaches → job marked `no_breaches`, **the LLM is never called**.
-7. Otherwise `run_ai_analysis(report, source, tenant, load_llm_config())` (`ai_analysis/analyzer.py`):
-   - `build_analyst()` builds the agent (OpenAI Agents SDK) pointed at **Ollama** via an OpenAI-compatible client (`config/llm_config.py` → `OLLAMA_BASE_URL` / `OLLAMA_MODEL`).
-   - The **9 checks are registered as tools**, so the agent can pull more data on demand while reasoning.
-   - `Runner.run(analyst, prompt)` — the prompt is the list of breaches; the agent correlates them, ranks severity, writes a summary, recommends fixes.
-   - Returns an `AiReport` (`overall_summary`, `findings[]`, `priority_order`).
-8. The job record is updated to `{status: "done", result: <AiReport>, seconds, breach_signature}`.
-
-### 4c. Poll until done
-9. The dashboard polls `GET /analysis/{job_id}` (`api_poll_analysis()`) every 3 seconds until `status` is `done` / `error` / `no_breaches`.
-10. On `done`, the `AiReport` is stored **keyed by (tenant, day)** so it never shows under a different date, and rendered as severity-tagged finding cards.
-
----
-
-## 4b. Editing thresholds (a write path, not just reads)
-
-The sidebar **⚙️ Thresholds** panel lets the user change what counts as a breach.
-This is the only place the dashboard *writes* back to configuration:
-
-1. On load, the panel calls `GET /tenants/{id}/thresholds` (`service.get_thresholds` → the tenant's `ThresholdsConfig`) and fills the number inputs.
-2. On **Save**, `api_set_thresholds()` → `PUT /tenants/{id}/thresholds` with the edited values.
-3. `service.set_thresholds()` → `update_tenant_thresholds()` (`config/thresholds_writer.py`):
-   - **Validates** the merged values against `ThresholdsConfig` (ranges enforced — e.g. percentages 0–100). Invalid → `ThresholdUpdateError` → HTTP **400**.
-   - Writes them into `config/tenants/<id>.yaml` using **round-trip YAML** (`ruamel.yaml`), updating keys in place so the file's comments survive.
-4. No cache to clear: the next `GET /report` calls `get_tenant()` fresh, so the new limits take effect on the next monitoring run.
-
----
-
-## 5. The extracted-JSON path (`type: export`) — bottom of the stack
-
-Used by the `bdaktprod` tenant. Reads real CM API exports saved as files under
-`data/bdaktprod/`.
-
-**How `get_source()` builds it:** `choose_data_source(tenant)` → `_export_source()` → `ClouderaExportSource("data/bdaktprod")` (`data_sources/export_source.py`).
-
-Folder layout it expects:
-```
-data/bdaktprod/
-  hosts/*.json          one host resource file each (HostsResource, view=FULL)
-  metrics/cpu.json  ram.json  disk.json  hdfs.json  network.json
-  services.json         GET /clusters/{c}/services?view=FULL
-  events.json           GET /events?query=alert==true
-```
-`services.json` / `events.json` are optional — if a file is absent, the matching
-check reports NO_DATA instead of a false result. For `bdaktprod` both are present, so **all nine checks run** on real data.
-
-**What each source method does when a check calls it:**
-- `get_hosts()` → reads `hosts/*.json`, `parse_cm_export.parse_host_file()` each.
-- `get_metrics([names])` → reads the relevant `metrics/*.json` (cached by file **mtime** — only re-read when the file changes on disk, so a 44 MB disk file isn't re-parsed every refresh), parses with `parse_cm_export.*`, then trims to `as_of` via `day_filter.trim_to_day()`.
-  - disk: `capacity`/`capacity_used` bytes → computed `fs_bytes_used_percent`.
-  - hdfs: per-DataNode capacity → summed into one cluster series.
-- `get_services()` → reads `services.json` → `parse_cm_export.parse_services()` (used by checks 6 & 7). `has_services()` is True when the file exists.
-- `get_events()` → reads `events.json` → `parse_cm_export.parse_events()`, which flattens CM's list-shaped `attributes` into a dict (used by check 8). `has_events()` is True when the file exists.
-- `get_roles()` → `[]` (no roles export; the service-status check works from service-level health alone).
-- `get_disk_usage()` / `ping_hosts()` / `get_log_files()` → `[]` (SSH isn't part of a file export).
-- `available_dates()` → the days present in `cpu.json` (powers the date picker).
-- `reference_now()` → newest host heartbeat (so a days-old export isn't reported as every host being silent).
-
----
-
-## 6. The live-API path (`type: api`) — bottom of the stack
-
-Used once a customer provides live access. Same interface, different plumbing.
-
-**How `get_source()` builds it:** `choose_data_source(tenant)` → `_api_source()` (`data_sources/select.py`):
-1. `load_tenant_secrets(tenant_id)` — loads `secrets/<tenant_id>.env` (that customer's credentials) into the environment.
-2. `ClouderaApiSource(tenant)` (`data_sources/api_source.py`) — builds a `ClouderaApiClient` (HTTP, `cloudera/api_client.py`) and, if configured, `SshCommands` (paramiko, `cloudera/ssh_commands.py`).
-3. `source.check_connection()` — one `GET /api/version` call to confirm the cluster is reachable. **If it fails, a clear `DataSourceError` is raised** → the endpoint returns HTTP 409 → the dashboard shows the friendly "not configured yet" message.
-
-**What each source method does when a check calls it:**
-- `get_hosts()` → `GET /hosts?view=FULL` → `parse_cm_export.parse_host_file()` each.
-- `get_metrics([names])` → for each needed query, `_fetch_plan()`:
-  - Builds the real CM tsquery (e.g. `select capacity_used, capacity where category=FILESYSTEM`).
-  - `GET /timeseries?query=...&from=<lookback_days ago>&to=now&desiredRollup=HOURLY`.
-  - Caches the result for `metrics_cache_ttl_sec` (default 300s) — since metrics are HOURLY, the ~10 s auto-refresh reuses the cache instead of re-hitting CM.
-  - Parses with the **same** `parse_cm_export.*` functions as the file path, then trims to `as_of`.
-- `get_services()` / `get_events()` → real `GET /clusters/{c}/services?view=FULL` and `GET /events?query=alert==true`, parsed with the same `parse_cm_export.parse_services()` / `parse_events()` as the file path. `get_roles()` → real `/roles` call.
-- `get_disk_usage()` / `ping_hosts()` / `get_log_files()` → over SSH (`cloudera/ssh_commands.py`), only if the tenant has an `ssh:` block.
-- `available_dates()` → days in the fetched CPU history (date picker works in live mode too).
-- `reference_now()` → newest host heartbeat.
-
-`lookback_days` and `metrics_cache_ttl_sec` are **per-tenant** (the `cloudera:` block in the tenant YAML).
-
----
-
-## 7. Side-by-side: same call, two paths
-
-`check_cpu_percent` calls `source.get_metrics(["cpu_percent"])`. What happens:
-
-| Step | `type: export` (files) | `type: api` (live) |
-|---|---|---|
-| Where data comes from | `data/<tenant>/metrics/cpu.json` | `GET /timeseries?query=select cpu_percent where category=HOST` |
-| Freshness control | re-read when file's mtime changes | cached `metrics_cache_ttl_sec` |
-| Parser | `parse_cm_export.parse_host_metric` | `parse_cm_export.parse_host_metric` (same) |
-| Day filter | `day_filter.trim_to_day(as_of)` | `day_filter.trim_to_day(as_of)` (same) |
-| Return type | `list[MetricSeries]` | `list[MetricSeries]` (same) |
-
-The check itself is byte-for-byte identical in both cases — it never knows which source answered.
-
----
-
-## 8. Operations quick reference
-
-**Run it (two terminals, venv active):**
 ```bash
-uvicorn api.main:app --port 8000 --reload      # backend
-streamlit run dashboard/app.py                 # frontend
+python -m backend.app.seed
 ```
-Dashboard: http://localhost:8501 · API docs: http://127.0.0.1:8000/docs
 
-**Logs:** `logs/ops_agent.log` — daily rotation, 7 days kept. Records every
-monitoring run's breaches, AI start/finish/failure, data-source choices, errors.
+**`backend/app/seed.py`** runs, in order:
 
-**Onboard a customer:**
-1. `config/tenants/<id>.yaml` — their cluster name, thresholds, `data_source.type`.
-2. Demo stage: `type: export`, drop their JSON exports in `data/<id>/` (`hosts/`, `metrics/`, and optionally `services.json` / `events.json`).
-3. Live stage: `type: api`, fill the `cloudera:` block, put credentials in `secrets/<id>.env`, flip the type.
+1. **`run_migrations()`** — invokes Alembic `upgrade head` against `backend/alembic/`, building every table in `db/models.py` (users, plans, tenants, tenant_files, user_tenants, user_kpi_refresh_rates, user_settings, api_usage, revoked_tokens).
+2. **`seed()`** — idempotently creates:
+   - the **Demo plan** (a starter set of allowed models + limits),
+   - the **admin account** (`ADMIN_EMAIL`/`ADMIN_PASSWORD` from settings),
+   - the **`bdaktprod` demo tenant** in `json` mode, pointing `data_dir` at the repo's `data/bdaktprod/` export, with thresholds copied from the engine's `config/tenants/bdaktprod.yaml`,
+   - a `UserTenant` link so the admin can see the demo cluster.
 
-**Edit thresholds:** from the dashboard sidebar (**⚙️ Thresholds**) or directly
-via `PUT /tenants/{id}/thresholds`. Either way the change is validated and saved back to the tenant YAML; the next monitoring run uses it.
+Re-running is safe — existing rows are left alone.
 
-**Tests:** `python -m pytest tests/ -q` (runs fully offline; the one live-LLM test is deselected by default in CI).
+---
+
+## 3. Frontend startup — provider tree and routing
+
+Vite serves **`frontend/src/main.jsx`** as the entry:
+
+1. `createRoot(...).render(...)` mounts a nested provider tree (outermost → innermost):
+   `ErrorBoundary → ThemeProvider → ToastProvider → QueryClientProvider (React Query) → AuthProvider → AnalysisProvider → App`.
+   - **`AuthProvider`** (`lib/auth.jsx`) restores the session from tokens in storage (`lib/tokens.js`) and fetches the current user.
+   - **`AnalysisProvider`** (`lib/analysis.jsx`) hydrates AI-analysis state from `localStorage` and resumes polling any still-running job. Polling lives **here, at the app root**, so a job keeps progressing as the user navigates.
+2. **`App.jsx`** sets up `BrowserRouter` and the routes, wrapped in guards (`routes/guards.jsx`):
+   - Public: `/login`, `/register` (redirect away if already signed in).
+   - Protected (inside `AppShell`): `/dashboard`, `/dashboard/:slug/:task/analysis`, `/settings`, `/admin` (admin-only).
+3. Every API call goes through **`lib/api.js`** — an axios instance with `baseURL: '/api'` that attaches the access token, and on a `401` transparently refreshes once (shared single in-flight refresh) and replays the request; if refresh fails, it clears tokens and redirects to `/login`.
+
+---
+
+## 4. The request lifecycle every API call goes through
+
+For any request to the backend:
+
+1. **`request_id_middleware`** (`core/errors.py`) assigns `request.state.request_id` (honoring an inbound `X-Request-ID`), sets it on the logging context (`core/log_context.py`), logs `"<METHOD> <path> started"`, and records the start time.
+2. FastAPI resolves the route's **dependencies**. For protected routes that includes **`get_current_user`** (`api/deps.py`): it decodes the Bearer JWT (`core/security.py`), loads the `User`, and writes the user's id/email into both the logging contextvar **and** `request.state` (the latter because Starlette runs the route in a separate task from the middleware).
+3. **`require_admin`** (`api/deps.py`) additionally gates admin routers with a 403 for non-admins.
+4. The **route handler** runs (gets a DB session via `get_db`, one per request).
+5. Back in the middleware, the completion line `"<METHOD> <path> -> <status> in <ms>ms"` is logged, attributed to the user (re-read from `request.state`), and `X-Request-ID` is set on the response.
+6. Any raised `HTTPException` is turned into the standard error envelope; any **unhandled** exception is logged at ERROR (→ `errors.log`) and returned as a 500 envelope.
+
+---
+
+## 5. First page load — login → tokens → tenant list
+
+1. The user submits the login form → `POST /auth/login` (`api/routes/auth.py::login`). On success it returns an **access + refresh token pair**; failures return one generic message (no email enumeration). Deleted/dormant accounts get specific 403s.
+2. `AuthProvider` stores the tokens and calls **`GET /auth/me`** (`auth.py::me`) to load the current user (role, plan, must-change-password, etc.).
+3. The dashboard mounts and calls **`GET /tenants`** (`api/routes/monitoring.py::list_tenants`): admins get every cluster; a normal user gets only the clusters linked to them via `UserTenant`.
+4. For the selected cluster, `GET /tenants/{slug}` returns its detail (including effective per-user refresh rates), and `GET /tenants/{slug}/dates` powers the historical date picker.
+
+---
+
+## 6. The monitoring loop (deterministic, no AI)
+
+The dashboard renders one **card per KPI**, and **each card polls on its own interval** (`components/monitoring/CheckCard.jsx`) — so a fast card (alerts, 15s) doesn't force a slow one (HDFS, 10 min) to recompute. There are two read endpoints:
+
+### 6a. One card refreshing — `GET /tenants/{slug}/report/{task}`
+
+1. `monitoring.py::tenant_single_check` runs. It first checks **KPI access** — `can_see_kpi(user, task)` (`engine/kpi_access.py`) → 403 if the user isn't granted that KPI.
+2. → **`bridge.build_single_check(tenant, task, as_of)`** (`engine/bridge.py`):
+   - `tenant_to_config(tenant)` builds an engine `TenantConfig` from the DB row (for `api` mode it decrypts CM credentials into per-tenant env vars the engine reads by name).
+   - `get_source(tenant)` returns a cached engine data source (rebuilt only when the tenant's mode changes; the export source re-reads files whose mtime changed).
+   - Under the tenant's lock, it sets `source.as_of` (for historical days) and runs the single check function from `checks/`.
+3. The `CheckResult` (`status`, `detail`, `evidence`, `threshold`) is returned as JSON and the card re-renders.
+
+### 6b. The whole dashboard — `GET /tenants/{slug}/report`
+
+1. `monitoring.py::tenant_report` → **`bridge.build_report(tenant, as_of)`** → **`run_all_checks(source, config, now)`** (`checks/run_all_checks.py`) runs all nine checks in order into a `HealthReport` (`breach_count`, `ok_count`, `no_data_count`).
+2. The endpoint **filters results to the KPIs this user may see** (`visible_kpis(user)`), recomputes `breach_count` over the visible set, and attaches effective refresh rates + the tenant's mode/version. The health ring and issue counts all derive from this filtered set, so every number on the dashboard is consistent with the cards shown.
+
+**No AI runs in this loop** — it's pure deterministic Python, fast and cheap. If the data source isn't usable yet (no files uploaded, live API unreachable) the engine raises `DataSourceError` → HTTP **409** → the UI shows a friendly "not configured yet" message.
+
+---
+
+## 7. The two data-source paths — bottom of the stack
+
+The paths differ **only** in the data-source object; every layer above is identical.
+
+### 7a. Uploaded-files path (`data_source_mode: json` → engine `export` source)
+
+Used by the seeded `bdaktprod` tenant and any tenant whose admin uploaded exports. `bridge.get_source` builds a **`ClouderaExportSource`** over the tenant's `data_dir`.
+
+Expected folder layout:
+```
+<data_dir>/
+  hosts/*.json          one host resource file each (view=FULL)
+  metrics/cpu.json ram.json disk.json hdfs.json network.json
+  services.json         (optional) GET /clusters/{c}/services?view=FULL
+  events.json           (optional) GET /events?query=alert==true
+```
+Optional files that are absent make their check report **NO_DATA** rather than a false result. Metric files are cached by **mtime** (a large disk file isn't re-parsed every refresh); results are trimmed to `as_of` via `day_filter`. SSH-only methods (`get_disk_usage`, `ping_hosts`, `get_log_files`) return empty.
+
+### 7b. Live-API path (`data_source_mode: api` → engine `ClouderaApiSource`)
+
+Used once a customer provides live access. `bridge.tenant_to_config` decrypts the tenant's CM password (`core/crypto.py`) into per-tenant env vars; the engine builds a `ClouderaApiClient` (HTTP) and, if configured, `SshCommands` (paramiko). `check_connection()` confirms reachability (failure → `DataSourceError` → 409). Metrics come from real CM `timeseries` queries at HOURLY rollup, cached for `metrics_cache_ttl_sec`; host health/heartbeat are never cached.
+
+### 7c. Same call, two paths
+
+`check_cpu_percent` calls `source.get_metrics(["cpu_percent"])`. Files → read `metrics/cpu.json` (mtime-cached). Live → `GET /timeseries?query=... where category=HOST` (TTL-cached). **Same parser, same day-filter, same return type.** The check never knows which source answered.
+
+---
+
+## 8. On-demand AI analysis (the agentic path)
+
+Triggered from a KPI card's "Run AI Analysis" (per-KPI) or the dashboard's incident section (all breaches). The AI is slow, so it runs as a **background job the frontend polls**.
+
+### 8a. Start the job
+
+1. Frontend `lib/analysis.jsx::start` → `POST /tenants/{slug}/analyze/{task}` (per-KPI) or `POST /tenants/{slug}/analyze` (incident) — `api/routes/analysis.py`.
+2. The endpoint runs **`_preflight`**: the user has a non-empty model chain, and they're under their usage limit (`llm/usage.check_limit`) → otherwise an instant 400/429. It also re-checks KPI access.
+3. **`jobs.start(...)`** (`ai/jobs.py`) creates an in-memory `Job` (`status: running`), **snapshots the logging context**, spawns a daemon **worker thread**, and returns a `job_id` immediately. The endpoint responds `{ job_id, status: "running" }`.
+
+### 8b. The background job — `ai/jobs.py::_run`
+
+Runs on the worker thread with its own DB session:
+
+1. **Re-applies the logging context** (a raw thread doesn't inherit contextvars) so every log line is still attributed to the user/request.
+2. Calls **`analyzer.analyze_kpi(...)`** or **`analyzer.analyze_incident(...)`** (`ai/analyzer.py`):
+   - Re-runs the deterministic check(s) via the **bridge** to get the current breach detail. If nothing is breaching → `NoBreachError`, **the LLM is never called**.
+   - Computes disk-trend context (`ai/trends.py`) where relevant.
+   - Hands off to **`agent_runner.run_kpi_with_fallback` / `run_incident_with_fallback`**.
+3. **`agent_runner.py`** resolves the user's fallback chain (`llm/access.effective_priority`) and, for each model until one succeeds:
+   - Builds a fresh agent (`ai/kpi_agents.py`) bound to that model, with task-specific instructions, governance rules, **investigation tools** (`ai/agent_tools.py`), and a **structured output schema** (`ai/models.py`).
+   - Seeds baseline knowledge (`ai/knowledge.py`) + dependency impact (`ai/dependencies.py`) directly into the agent input, then runs it (`Runner.run`, agentic) — **or**, for Anthropic, the single-shot direct-call fallback.
+   - Meters the attempt (`llm/usage.record` → `ApiUsage`); on failure, logs and falls through to the next model.
+4. Back in `analyzer.py`, the model's severity is **floored by the check's own data** (`ai/models.apply_floor`) — the governance guardrail — and the result is shaped into `KpiAnalysis` / `IncidentReport`.
+5. The finished analysis is **appended to `context/breach_history.csv`** (`ai/breach_history.py`) — best-effort, never raises.
+6. The `Job` is marked `done` (or `no_breach` / `error`).
+
+### 8c. Poll until done
+
+The frontend polls **`GET /analysis/{job_id}`** (`analysis.py::poll`, which enforces "your job or admin") every few seconds until `status` is `done` / `error` / `no_breach`. Results are cached in `localStorage` keyed by (cluster, task, day), so a refresh shows the finished analysis instead of re-running it, and any failed preferred model is surfaced with the provider's actual error.
+
+---
+
+## 9. Editing thresholds (a write path)
+
+The only place the dashboard writes back configuration (`components/monitoring/ThresholdsModal.jsx`):
+
+1. `GET /tenants/{slug}/thresholds` (`monitoring.py`) returns **only the thresholds behind KPIs this user can see** (`visible_threshold_fields`).
+2. On save, `PUT /tenants/{slug}/thresholds` validates the values, **rejects edits to hidden fields with 403**, merges them onto the tenant's stored thresholds (a JSON column on `Tenant`), and persists. The next monitoring run reads the new limits — no cache to clear beyond the source, which the bridge handles.
+
+Per-KPI **refresh intervals** work the same way via `/settings/kpi-refresh` (`api/routes/kpi_settings.py`), stored per-user in `user_kpi_refresh_rates` and merged over the cluster defaults.
+
+---
+
+## 10. Access control — who sees which KPIs and models
+
+Enforced server-side, not just hidden in the UI:
+
+- **KPI visibility** (`engine/kpi_access.py`): `User.allowed_kpis` — empty means all nine; non-empty restricts the dashboard cards, the report results, the thresholds, and the refresh settings a user sees. Admins always see all nine. Every read/write endpoint checks `can_see_kpi` / `visible_kpis` / `visible_threshold_fields`.
+- **Model access** (`llm/access.py`): `effective_allowed_models(user)` = the user's own list if set, else their plan's — filtered to models still in the registry. `effective_priority(user)` is their fallback chain, filtered to what they're still allowed. A revoked model silently drops out.
+- **Usage limits** (`llm/usage.py`): `effective_limits(user)` merges per-user overrides over plan defaults (0 = unlimited); `check_limit` runs before any analysis starts.
+
+---
+
+## 11. Logging, end to end
+
+`core/logging_config.py` + `core/log_context.py`:
+
+- **`logs/app.log`** (INFO+, JSON lines) and **`logs/errors.log`** (ERROR+), both rotating at midnight UTC, 7-day retention, older files auto-deleted.
+- A `ContextFilter` attaches **`request_id`, `user_id`, `user_email`** to every record — from any logger, including the engine and third-party libraries.
+- The context is set in the request middleware (§4), propagates automatically through async/await and into the monitoring engine, and is **explicitly re-applied inside the AI worker thread** (§8b) since raw threads don't inherit contextvars.
+- Net effect: one `request_id` (or one `user_email`) is a single query away across every module that touched it.
+
+```bash
+# PowerShell:
+Get-Content logs\app.log | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.request_id -eq "abc123" }
+# Git Bash / Linux:
+grep '"request_id": "abc123"' logs/app.log | jq .
+```
+
+---
+
+## 12. Operations quick reference
+
+**Prepare DB (once):**
+```bash
+python -m backend.app.seed
+```
+
+**Run it (two terminals, venv active, repo root):**
+```bash
+uvicorn backend.app.main:app --port 8000 --reload    # backend
+npm run dev --prefix frontend                         # frontend (Vite :5173, proxies /api -> :8000)
+```
+Frontend: http://localhost:5173 · API docs: http://127.0.0.1:8000/docs
+
+**Logs:** `logs/app.log` (all, JSON) and `logs/errors.log` (errors) — daily rotation, 7 days.
+
+**Breach history:** `context/breach_history.csv` — appended on every completed AI analysis (cross-user corpus; gitignored).
+
+**Tests:** `python -m pytest backend/tests -q` (fully offline; the LLM is never actually called).
+
+**Onboard a customer (admin, in the app):**
+1. Create the tenant (Admin → Tenants).
+2. Demo stage: keep `json` mode, upload their CM export files.
+3. Live stage: switch to `api` mode, enter CM host/credentials (encrypted at rest), test the connection.
+4. Link the customer's user(s) to the tenant; optionally restrict their KPIs, models, and limits.
+
+**Add a new KPI (a 10th check):** the 9 KPIs are curated, code-defined checks; adding a new one is small, versioned dev work following a fixed pattern. See **[docs/ADDING_A_KPI.md](docs/ADDING_A_KPI.md)** for the step-by-step runbook (which files/functions to touch, in order).
 
 **Common issues:**
 | Symptom | Cause | Fix |
 |---|---|---|
-| Dashboard: "Can't reach the monitoring API" | backend not running | start uvicorn on :8000 |
-| `ModuleNotFoundError: app_logging` | uvicorn launched from inside `api/` | run from project root as `api.main:app` |
-| A check shows **NO DATA** | that source file/endpoint isn't available (e.g. no `services.json`) | add the file, or wire the live endpoint |
-| "hdfs service not found" | stale server, or `cluster_name` ≠ services' `clusterRef` | restart the API; check the cluster name matches |
-| Tenant shows ⚠️ "not configured yet" | live-API tenant, cluster unreachable / no creds | fill `cloudera:` + `secrets/<id>.env`, or keep `type: export` |
-| Port already in use | old process still bound | `netstat -ano | findstr :8000`, then `taskkill /F /PID <pid>` |
-| Threshold edit rejected (400) | value out of range (e.g. CPU % > 100) | enter a valid value |
-| AI analysis fails instantly | Ollama not running / model not pulled | start Ollama, `ollama pull qwen2.5:7b` |
+| Frontend: "Cannot reach the server" | backend not running, or on the wrong port | start uvicorn on `:8000` (or set `BACKEND_URL` for the Vite proxy) |
+| `no such table` / login fails on a fresh checkout | migrations never run | `python -m backend.app.seed` |
+| A KPI card shows **NO DATA** | that source file/endpoint isn't available (e.g. no `services.json`) | upload the file, or wire the live endpoint |
+| Tenant shows "not configured yet" (409) | data source unusable — no files, or live CM unreachable/no creds | upload exports, or fill CM connection details |
+| AI analysis returns instantly with an error | no model in the user's chain, or over the usage limit | set a model priority in Settings / raise the plan limit |
+| AI falls back to another model | the preferred model failed (bad key, provider down, quota) | the card names the failed model + provider error; fix the key/quota |
+| AI analysis "spins forever" until refresh | (fixed) frontend poll loop didn't start | ensure `lib/analysis.jsx` is current; polling now starts synchronously |
+| A `403` on a threshold or KPI | the user isn't granted that KPI | grant it in Admin → the user's access panel |
+| Local model errors instantly | Ollama not running / model not pulled | start Ollama, `ollama pull qwen2.5:7b`, set the Ollama URL in Settings |
+| Port already in use | old process still bound | `netstat -ano \| findstr :8000`, then `taskkill /F /PID <pid>` |

@@ -7,6 +7,7 @@
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from ..core import log_context
 from ..core.security import TokenError, decode_token
 from ..db.base import get_db
 from ..db.models import Role, User
@@ -28,6 +29,15 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     user = db.get(User, int(payload["sub"]))
     if user is None or not user.is_active:
         raise HTTPException(status_code=401, detail="Account not found or disabled")
+    # Two writes, two audiences: the contextvar is what every logger call in this
+    # request's call stack picks up automatically (engine/ai code has no Request
+    # object to read from). request.state is ALSO needed because Starlette's
+    # BaseHTTPMiddleware runs route handlers in a separate anyio task — a
+    # contextvar set here would never be visible back in the middleware's own
+    # "request completed" log line, but request.state is the same shared object.
+    log_context.set_user(user.id, user.email)
+    request.state.user_id = user.id
+    request.state.user_email = user.email
     return user
 
 

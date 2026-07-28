@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     app_name: str = "Cloudera Ops Monitoring"
     debug: bool = False
 
+    # --- logging (see core/logging_config.py) ---
+    log_level: str = "INFO"
+
     # --- database ---
     database_url: str = f"sqlite:///{PROJECT_ROOT / 'backend' / 'ops.db'}"
 

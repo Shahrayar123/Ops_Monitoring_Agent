@@ -22,6 +22,10 @@ class RecoverAccountRequest(BaseModel):
     password: str
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
 class TokenPair(BaseModel):
     access_token: str
     refresh_token: str

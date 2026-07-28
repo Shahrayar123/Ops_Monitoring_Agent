@@ -20,6 +20,7 @@ from ...ai import jobs
 from ...ai.dependencies import DEPENDENCIES, affected_by, downstream_of
 from ...db.base import get_db
 from ...db.models import Tenant, User
+from ...engine.kpi_access import can_see_kpi
 from ...llm.access import effective_priority, effective_allowed_models
 from ...llm.usage import LimitExceeded, check_limit
 from ..deps import get_current_user
@@ -52,6 +53,8 @@ def analyze_kpi(
 ):
     if task not in _VALID_TASKS:
         raise HTTPException(status_code=404, detail=f"Unknown check '{task}'")
+    if not can_see_kpi(user, task):
+        raise HTTPException(status_code=403, detail="You don't have access to this KPI.")
     _preflight(db, user)
     job_id = jobs.start("kpi", user, tenant, task, as_of)
     return {"job_id": job_id, "status": "running"}

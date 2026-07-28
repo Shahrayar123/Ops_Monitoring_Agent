@@ -27,7 +27,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 
-from agents import AsyncOpenAI, OpenAIChatCompletionsModel, Runner
+from agents import AsyncOpenAI, OpenAIChatCompletionsModel, Runner, set_tracing_disabled
 from sqlalchemy.orm import Session
 
 from ..db.models import User
@@ -39,6 +39,15 @@ from ..llm.registry import ModelSpec, get_model
 from . import knowledge, kpi_agents, models as ai_models, prompts
 
 log = logging.getLogger("backend.ai.agent_runner")
+
+# The Agents SDK uploads run traces (prompts included) to OpenAI's platform by
+# default whenever an OpenAI key is present in the environment. This product
+# analyses customer cluster data — hostnames, mounts, breach details — and
+# explicitly promises that local-Ollama runs keep data on the network, so we
+# never want that export, regardless of which provider a user picked. Disabling
+# it also drops a per-run network round-trip and the noisy "skipping trace
+# export" log line.
+set_tracing_disabled(True)
 
 
 @dataclass
@@ -101,9 +110,14 @@ def _run_kpi_attempt(spec, api_key, ollama_url, *, task, result, trend_text, clu
         f"Status: {result.get('status')}\n"
         f"Detail: {result.get('detail')}\n"
         f"Threshold: {result.get('threshold')}\n\n"
-        f"BASELINE KNOWLEDGE (a starting point — call search_knowledge for more):\n{baseline}\n\n"
+        f"BASELINE KNOWLEDGE:\n{baseline}\n\n"
         f"DEPENDENCY IMPACT: {prompts.dependency_block(task)}\n\n"
-        "Investigate further with your tools if you need to, then give your final analysis."
+        # Deliberately decisive. Earlier wording ("investigate further with your
+        # tools if you need to") invited models to narrate a PLAN instead of
+        # answering — Nemotron returned "We need to get evidence detail..." as its
+        # summary. Asking directly for the finished analysis fixes that; tools are
+        # still available and described in the agent instructions.
+        "Give your final analysis now, using the context above."
     )
     run_result = _run_agent_sync(agent, input_text, timeout, max_turns=6)
     out: ai_models.KpiAgentOutput = run_result.final_output
@@ -122,9 +136,10 @@ def _run_incident_attempt(spec, api_key, ollama_url, *, breached, trend_text, cl
     input_text = (
         f"CLUSTER: {cluster} — Cloudera version {version or 'UNSPECIFIED (assume a recent CDP release)'}\n\n"
         f"{len(breached)} checks are breaching: {', '.join(tasks)}\n\n"
-        f"BASELINE KNOWLEDGE per breach (a starting point — call get_check_detail / search_knowledge for more):\n"
+        f"BASELINE KNOWLEDGE per breach:\n"
         f"{chr(10).join(baseline_blocks)}\n\n"
-        "Look closer at any check with your tools if you need to, connect related problems, then give your final incident report."
+        # Same reasoning as the KPI prompt above — ask for the report, not a plan.
+        "Connect related problems and give your final incident report now, using the context above."
     )
     run_result = _run_agent_sync(agent, input_text, timeout, max_turns=10)
     out: ai_models.IncidentAgentOutput = run_result.final_output

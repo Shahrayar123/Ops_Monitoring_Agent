@@ -23,6 +23,7 @@ from ...db.base import get_db
 from ...db.models import Role, Tenant, User, UserKpiRefreshRate, UserTenant
 from ...engine import bridge
 from ...engine.bridge import DataSourceError
+from ...engine.kpi_access import ALL_KPI_TASKS, can_see_kpi, visible_kpis, visible_threshold_fields
 from ...engine import uploads
 from ...schemas.tenant import TenantDetail, TenantSummary, ThresholdsUpdate
 from ..deps import get_current_user
@@ -99,6 +100,12 @@ def tenant_report(
         # The tenant's data source isn't usable yet (no files / API not wired).
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     payload = report.model_dump(mode="json")
+    # Restrict the results to the KPIs this user is allowed to see. The health
+    # ring, issue counts, and incident section all derive from these results, so
+    # filtering here keeps every dashboard number consistent with the cards shown.
+    allowed = visible_kpis(user)
+    payload["results"] = [r for r in payload["results"] if r["task"] in allowed]
+    payload["breach_count"] = sum(1 for r in payload["results"] if r["status"] == "BREACH")
     payload["refresh_rates"] = _effective_refresh_rates(tenant, user, db)
     payload["data_source_mode"] = tenant.data_source_mode
     payload["cloudera_version"] = tenant.cloudera_version
@@ -109,10 +116,14 @@ def tenant_report(
 def tenant_single_check(
     task: str,
     tenant: Tenant = Depends(get_tenant_or_404),
+    user: User = Depends(get_current_user),
     as_of: Optional[date] = Query(default=None),
 ):
     """One check's current result — each dashboard card polls this on its own
     configured interval."""
+    # Only gate real KPIs; an unknown task falls through to the 404 below.
+    if task in ALL_KPI_TASKS and not can_see_kpi(user, task):
+        raise HTTPException(status_code=403, detail="You don't have access to this KPI.")
     try:
         result = bridge.build_single_check(tenant, task, as_of)
     except KeyError:
@@ -128,14 +139,19 @@ def get_refresh_rates(tenant: Tenant = Depends(get_tenant_or_404), user: User = 
 
 
 @router.get("/tenants/{slug}/thresholds")
-def get_thresholds(tenant: Tenant = Depends(get_tenant_or_404)):
-    return bridge.tenant_to_config(tenant).thresholds.model_dump()
+def get_thresholds(tenant: Tenant = Depends(get_tenant_or_404), user: User = Depends(get_current_user)):
+    """Only the thresholds behind KPIs this user can see — a user restricted to
+    Host Health shouldn't be shown (or able to tune) the CPU limit."""
+    all_thresholds = bridge.tenant_to_config(tenant).thresholds.model_dump()
+    allowed = visible_threshold_fields(user)
+    return {k: v for k, v in all_thresholds.items() if k in allowed}
 
 
 @router.put("/tenants/{slug}/thresholds")
 def update_thresholds(
     body: ThresholdsUpdate,
     tenant: Tenant = Depends(get_tenant_or_404),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Merge the provided fields into the tenant's thresholds and persist. The
@@ -143,6 +159,13 @@ def update_thresholds(
     changes = body.model_dump(exclude_none=True)
     if not changes:
         raise HTTPException(status_code=400, detail="No threshold values provided")
+
+    # Reject edits to thresholds behind KPIs this user can't see, so a restricted
+    # user can't tune a cluster-wide limit for a metric they aren't granted.
+    allowed = visible_threshold_fields(user)
+    forbidden = sorted(set(changes) - allowed)
+    if forbidden:
+        raise HTTPException(status_code=403, detail=f"You don't have access to these thresholds: {', '.join(forbidden)}")
 
     merged = {**(tenant.thresholds or {}), **changes}
     # Validate through the engine schema so a bad value is rejected with a reason.

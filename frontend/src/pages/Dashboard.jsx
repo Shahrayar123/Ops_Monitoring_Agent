@@ -77,6 +77,14 @@ export default function Dashboard() {
     return m
   }, [reportQ.data])
 
+  // The KPIs this user may see: the backend filters the report's results to the
+  // user's allowed_kpis (admins/unrestricted get all nine), so we render exactly
+  // the checks present in the report, in the canonical dashboard order.
+  const visibleTasks = useMemo(
+    () => CHECK_ORDER.filter((t) => seedByTask[t] !== undefined),
+    [seedByTask]
+  )
+
   const rates = reportQ.data?.refresh_rates || {}
   const mode = reportQ.data?.data_source_mode
   const tenant = tenantsQ.data?.find((t) => t.slug === activeSlug)
@@ -94,7 +102,7 @@ export default function Dashboard() {
     [affectedByMap, breachingSet]
   )
 
-  const aiCounts = useAnalysisCounts(activeSlug, activeDate, CHECK_ORDER)
+  const aiCounts = useAnalysisCounts(activeSlug, activeDate, visibleTasks)
 
   function switchTenant(s) {
     setSlug(s)
@@ -203,9 +211,9 @@ export default function Dashboard() {
             </div>
           </Card>
 
-          {/* The nine checks */}
+          {/* The KPI cards this user may see (all nine, or the admin-granted subset) */}
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {CHECK_ORDER.map((task) => (
+            {visibleTasks.map((task) => (
               <CheckCard
                 key={`${activeSlug}:${task}:${activeDate}`}
                 slug={activeSlug}

@@ -49,7 +49,11 @@ def test_build_kpi_agent_has_task_specific_instructions_and_tools():
     agent = kpi_agents.build_kpi_agent("disk_percent", model=None, result=result, trend_text="(none)")
     assert "Disk & Logs" in agent.name
     assert "DISK & LOG" in agent.instructions
-    assert agent.output_type is KpiAgentOutput
+    # output_type is wrapped in an AgentOutputSchema (see kpi_agents.py) — assert
+    # the wrapped model, not identity. Strict mode is deliberate and measured:
+    # it works on Ollama and OpenRouter and yields better-populated results.
+    assert agent.output_type.output_type is KpiAgentOutput
+    assert agent.output_type.is_strict_json_schema() is True
     tool_names = {t.name for t in agent.tools}
     assert tool_names == {"search_knowledge", "get_dependency_impact", "get_evidence_detail", "get_disk_trend"}
 
@@ -68,7 +72,8 @@ def test_build_incident_agent_has_coordinator_tools():
     breached = [{"task": "disk_percent", "detail": "full"}, {"task": "hdfs_health", "detail": "concerning"}]
     agent = kpi_agents.build_incident_agent(model=None, breached=breached, trend_text="(none)")
     assert agent.name == "Incident Coordinator"
-    assert agent.output_type is IncidentAgentOutput
+    assert agent.output_type.output_type is IncidentAgentOutput
+    assert agent.output_type.is_strict_json_schema() is True
     tool_names = {t.name for t in agent.tools}
     assert tool_names == {"get_check_detail", "search_knowledge", "get_disk_trend"}
 
